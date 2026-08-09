@@ -16,45 +16,136 @@ Sofía replaces course-and-quiz completion tracking with per-skill, per-employee
 
 ## Architecture
 
-```text
-frontend (React/Vite)                     backend (FastAPI)                       voice-service
-─────────────────────                     ──────────────────                     ──────────────
-ChatPage.tsx  ── POST /api/chat (SSE) ──▶  chat.py
-                                              │  runtime.get_compiled_graph()
-                                              ▼
-                                           orchestrator.py  (LangGraph StateGraph, SQLite checkpointer, thread_id = session_id)
-                                              │
-                                              ├─▶ agent_entry   reset per-turn scratchpad fields
-                                              │
-                                              ├─▶ agent         LLM call with ORCHESTRATOR_TOOLS bound (ToolCallingLLM)
-                                              │      │
-                                              │      ▼  requests one of: assess_reply / remediate / extract_personal_fact
-                                              │         / compose_delivery / end_session
-                                              │
-                                              ├─▶ tools         tools_node dispatches each requested call to real
-                                              │      │          Python logic — never to model-supplied arguments:
-                                              │      ├─ assess_reply        → evaluate_turn()        (app/agent/nodes/evaluate.py)
-                                              │      │                        → bkt.update()          (app/mastery/bkt.py)
-                                              │      │                        → next_assessable_kc()  (app/kg/loader.py)
-                                              │      ├─ remediate            → run_remediation()      (app/agent/subagents/remediation.py)
-                                              │      │                        → Index.retrieve()      (app/rag/retrieve.py, cites or abstains)
-                                              │      ├─ extract_personal_fact → extract_and_gate_fact() (app/agent/nodes/memory.py)
-                                              │      │                        → pii_gate              (app/memory/pii_gate.py)
-                                              │      └─ compose_delivery      → render()               (app/channels.py, channel-adapted text)
-                                              │      loops back to `agent` until no more tool calls, or compose_delivery/
-                                              │      end_session already fired, or max_tool_iterations is hit
-                                              │
-                                              └─▶ finalize      renders compose_delivery's output; Repo persists mastery
-                                                                 deltas / facts / events (app/persistence/repo.py)
-                                                                     │
-                                                       ── tts.synthesize() ──▶  voice-service (Kokoro-82M)  ── audio (base64) ──┐
-                                                                                                                                 │
-ChatPage.tsx  ◀── SSE: token chunks, session_id, audio ──────────────────────────────────────────────────────────────────────┘
+### System architecture
+
+Two request paths through the same FastAPI process: the per-turn chat path (runtime) and the offline KG-authoring path (studio). They share the KG YAML as a one-way handoff — studio writes it, the runtime graph only ever reads it — and are otherwise independent, with separate SQLite databases.
+
+```mermaid
+flowchart TB
+    subgraph FE["frontend — React/Vite (backend/app/static)"]
+        Chat["ChatPage.tsx\nMasteryPanel · MemoryLog · ReasoningTrace"]
+        Studio["studio/ (frontend/src/studio)\nupload → review → approve"]
+    end
+
+    subgraph BE["backend — FastAPI (backend/app)"]
+        direction TB
+
+        subgraph RuntimePath["Runtime path — one graph turn per request"]
+            ChatAPI["api/chat.py\nPOST /api/chat (SSE)\nGET /api/kg, /session/{id}/mastery, /facts"]
+            Orchestrator["orchestrator.py\nLangGraph StateGraph\nthread_id = session_id"]
+            KG["kg/loader.py\nnetworkx DiGraph\nprerequisite gating"]
+            BKT["mastery/bkt.py\npure-function BKT update"]
+            RAG["rag/retrieve.py\nBM25 over SOP chunks\ncite-or-abstain"]
+            PII["memory/pii_gate.py\nfail-closed allowlist"]
+            Channels["channels.py\nchannel-adapted rendering"]
+            Repo["persistence/repo.py"]
+            TTSClient["agent/tts.py\nbest-effort call"]
+        end
+
+        subgraph StudioPath["Studio path — offline, human-gated"]
+            StudioAPI["api/studio.py\nPOST /drafts, /extract, /approve"]
+            Ingest["studio/ingest.py"]
+            Extract["studio/extract.py\nLLM proposes KCs + edges"]
+            Reconcile["studio/reconcile.py\nstudio/validate.py"]
+            Materialize["studio/materialize.py\nwrites app/kg/graph.yaml\nonly after human approve"]
+            StudioRepo["studio/repo.py"]
+        end
+    end
+
+    subgraph Data["Storage"]
+        RuntimeDB[("runtime.db (SQLite)\nlearner_model · personal_facts\nepisodic_archive · events")]
+        CheckpointDB[("checkpoints.sqlite (SQLite)\nLangGraph checkpointer\nsession/turn state")]
+        StudioDB[("studio.db (SQLite)\ngraph_drafts")]
+        KGYaml[["app/kg/graph.yaml\n24-KC seed graph"]]
+        SOPs[["docs/sops/\n8-doc SOP corpus"]]
+    end
+
+    Voice["voice-service\nKokoro-82M TTS"]
+
+    Chat -- "SSE: tokens, session_id, audio" --> ChatAPI
+    ChatAPI --> Orchestrator
+    Orchestrator <-- "checkpoint read/write" --> CheckpointDB
+    Orchestrator --> KG --> KGYaml
+    Orchestrator --> BKT
+    Orchestrator --> RAG --> SOPs
+    Orchestrator --> PII
+    Orchestrator --> Channels
+    Orchestrator --> Repo --> RuntimeDB
+    Orchestrator -. "best-effort" .-> TTSClient -. "audio (base64) or degrade to text" .-> Voice
+
+    Studio -- "upload SOPs / review / approve" --> StudioAPI
+    StudioAPI --> Ingest --> SOPs
+    StudioAPI --> Extract --> Reconcile --> Materialize
+    StudioAPI --> StudioRepo --> StudioDB
+    Materialize -- "writes, only post-approval" --> KGYaml
 ```
+
+**Responsibilities at a glance**
+
+| Box | Input | Output | Responsibility |
+|---|---|---|---|
+| `api/chat.py` | HTTP POST/GET from `ChatPage.tsx` | SSE stream (tokens, `session_id`, audio) | One `/api/chat` call = one LangGraph turn; `session_id` **is** the `thread_id` — no separate session table |
+| `orchestrator.py` | Prior checkpoint state + new user turn | Partial state updates, one rendered reply | LangGraph ReAct loop; decides *which* tool fires, never the deterministic math inside it |
+| `kg/loader.py` | `graph.yaml` | Next assessable KC | Prerequisite-gated KC selection over `networkx` |
+| `mastery/bkt.py` | Prior mastery, turn correctness | Updated mastery (pure function) | Bayesian Knowledge Tracing — never computed by the LLM |
+| `rag/retrieve.py` | Query text | Cited chunk or abstain | BM25 over the 8-doc SOP corpus; below-threshold → abstain, never fabricate |
+| `memory/pii_gate.py` | Candidate personal fact | Store / reject | Fail-closed allowlist; special-category disclosures acknowledged, never persisted |
+| `channels.py` | Composed reply, channel type | Channel-adapted text | Telegram-style text vs. voice-oriented phrasing |
+| `persistence/repo.py` | Mastery deltas, facts, events | Rows in `runtime.db` | Sole writer of the runtime SQLite schema |
+| `studio/extract.py` | Raw SOP text | Draft KCs + `prerequisite_of` edges | LLM proposes a taxonomy; never auto-applied |
+| `studio/materialize.py` | Approved draft | `app/kg/graph.yaml` | Only path that writes the graph the runtime reads — gated on explicit human approval |
+| `voice-service` | Reply text | Base64 audio | Standalone Kokoro-82M process; unreachable → text-only, never fails the turn |
 
 One `/api/chat` request runs exactly one graph turn end to end and streams back over SSE; `session_id` is the LangGraph `thread_id`, so the client resumes a session by echoing it back — no separate session table, the checkpointer's own state is the source of truth (`GET /session/{id}/mastery`, `/facts` read it directly). The four deterministic paths — the BKT formula, KC unlock gating, citation-or-abstain retrieval, and the PII allowlist — always run as real pure functions inside `tools_node`, regardless of what the model decides to call or in what order; the only thing the model controls is whether/when each tool fires and the turn's wording. TTS is a best-effort side call after `finalize`: an unreachable voice-service degrades the turn to text-only rather than failing it.
 
 The KG studio (`app/studio/`) is a separate, offline pipeline, not part of this per-turn path: `ingest` (SOP upload) → `extract` (LLM proposes KCs + `prerequisite_of` edges) → `reconcile`/`validate` → human review in `frontend/src/studio/` → `materialize` (writes `app/kg/graph.yaml`) only after explicit approval. The runtime graph above only ever reads the materialized YAML; it never talks to the studio pipeline directly.
+
+### Agent architecture (LangGraph ReAct orchestrator)
+
+The conversational agent is a single **ReAct loop**: one LLM node picks a tool, one dispatch node runs the corresponding deterministic Python (never the model's own arguments for anything requiring an audit trail), and the loop repeats until the model calls `compose_delivery`/`end_session` or a max-iteration cap is hit. State is checkpointed to SQLite per turn, keyed by `session_id`.
+
+```mermaid
+flowchart TD
+    START([START]) --> Entry["agent_entry\nreset per-turn scratchpad fields"]
+    Entry --> Agent["agent node\nToolCallingLLM, ORCHESTRATOR_TOOLS bound"]
+
+    Agent -- "route_after_agent" --> RouteAgent{"tool call\nrequested?"}
+    RouteAgent -- "yes" --> Tools["tools node\ndispatches to real Python logic"]
+    RouteAgent -- "no / compose_delivery / end_session" --> Finalize["finalize node"]
+
+    Tools -- "route_after_tools" --> RouteTools{"more tool calls,\nunder max_tool_iterations?"}
+    RouteTools -- "yes, loop back" --> Agent
+    RouteTools -- "no" --> Finalize
+
+    Finalize --> End([END])
+
+    subgraph ToolDispatch["tools node — 5 tool schemas, all backed by deterministic modules"]
+        direction LR
+        T1["assess_reply"] --> Eval["evaluate_turn()\napp/agent/nodes/evaluate.py"]
+        Eval --> BKTU["bkt.update()\napp/mastery/bkt.py"]
+        BKTU --> NextKC["next_assessable_kc()\napp/kg/loader.py"]
+
+        T2["remediate"] --> RunRem["run_remediation()\napp/agent/subagents/remediation.py"]
+        RunRem --> Retr["Index.retrieve()\napp/rag/retrieve.py\ncites or abstains"]
+
+        T3["extract_personal_fact"] --> ExtractFact["extract_and_gate_fact()\napp/agent/nodes/memory.py"]
+        ExtractFact --> Gate["pii_gate\napp/memory/pii_gate.py"]
+
+        T4["compose_delivery"] --> Render["render()\napp/channels.py\nchannel-adapted text"]
+
+        T5["end_session"]
+    end
+
+    Tools -.-> ToolDispatch
+
+    Finalize -- "persist mastery deltas,\nfacts, events" --> Repo[("persistence/repo.py\n→ runtime.db")]
+    Finalize -. "best-effort" .-> TTS["tts.synthesize()"] -. "audio or\ndegrade to text" .-> Voice["voice-service\nKokoro-82M"]
+
+    CP[("checkpoints.sqlite\nLangGraph checkpointer")] -.->|"resume by thread_id"| Entry
+    Finalize -.->|"checkpoint written"| CP
+```
+
+**Pattern**: single-agent ReAct (bind-tools + loop), not a multi-agent handoff graph — `remediate` and `compose_delivery` dispatch into subagent-style modules (`app/agent/subagents/`) but those run as plain function calls inside `tools_node`, not as separate graph nodes with their own state. The five tool schemas (`app/agent/tools.py`) define only names/descriptions/args for `.bind_tools()`; `tools_node` is what actually invokes the mastery engine, KG traversal, PII gate, and channel policy, so grading, unlock rules, retrieval-or-abstain, and the PII allowlist stay unit-testable without an LLM and immune to prompt injection changing their output.
 
 ## Implementation
 
