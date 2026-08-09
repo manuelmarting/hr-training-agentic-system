@@ -1,0 +1,293 @@
+# Runtime knowledge graph — role: warehouse_operative
+#
+# This file is the frozen, approved output of a run of the §8 authoring studio over the
+# eight SOPs in docs/sops/. It is authored here as the seed; the studio's materialize.py
+# writes files of exactly this shape (app/kg/loader.py is the read/write authority).
+#
+# KCs are sorted by id and each carries its `prerequisites` (the ids that must be
+# mastered before it) and its `provenance` (doc id, heading, verbatim excerpt from the
+# source SOP). The four cross-document edges — EQP.002→SAF.005, PRC.003→EQP.005,
+# PRC.005→SAF.001, SYS.002→SYS.001/PRC.008 — are the ones a single-document extraction
+# pass cannot find (docs/sops/README.md).
+role: warehouse_operative
+knowledge_components:
+- id: BEH.001
+  name: Shift handover
+  domain: behavioural
+  description: What must be communicated at shift handover and to whom.
+  provenance:
+    doc_id: 08-handover-escalation
+    heading: '1. Shift handover: what must be communicated and to whom'
+    excerpt: Handover must be verbal and confirmed understood by the incoming operative
+      — reading a status board alone does not satisfy this requirement, since a board
+      can be misread or out of date.
+  prerequisites: []
+- id: BEH.002
+  name: Escalation thresholds
+  domain: behavioural
+  description: What to stop for versus what to report after the fact.
+  provenance:
+    doc_id: 08-handover-escalation
+    heading: '2. Escalation thresholds: what to stop for vs. report after'
+    excerpt: Confusing the two is itself a safety risk — over-escalating erodes trust
+      in the escalation channel, under-escalating delays response to a genuine risk.
+  prerequisites: []
+- id: EQP.001
+  name: Pre-use inspection checklist — powered pallet truck
+  domain: equipment
+  description: Complete the pre-use inspection checklist for a powered pallet truck
+    (PPT).
+  provenance:
+    doc_id: 03-ppt-operation
+    heading: 1. Pre-use inspection checklist
+    excerpt: Do not operate a PPT that fails any item — tag it out and report to the
+      shift supervisor.
+  prerequisites: []
+- id: EQP.002
+  name: PPT operation
+  domain: equipment
+  description: Operate a PPT safely — load stability, gradients, and cornering.
+  provenance:
+    doc_id: 03-ppt-operation
+    heading: '2. Operation: load stability, gradients, cornering'
+    excerpt: 'Load stability: forks must be fully inserted under the pallet before
+      lifting; never lift a load that is not square on the forks.'
+  prerequisites:
+  - EQP.001
+  - SAF.005
+- id: EQP.003
+  name: Reach truck mast/height limits and load-chart reading
+  domain: equipment
+  description: Read the load chart and respect mast/height limits on a reach truck.
+  provenance:
+    doc_id: 04-reach-truck-battery-scanner
+    heading: '1. Reach truck: mast/height limits and load-chart reading'
+    excerpt: Capacity decreases as lift height increases — a load acceptable at 3m
+      may exceed the chart's rated capacity at 8m.
+  prerequisites:
+  - EQP.002
+- id: EQP.004
+  name: Battery change / charging safety
+  domain: equipment
+  description: Change and charge MHE batteries safely.
+  provenance:
+    doc_id: 04-reach-truck-battery-scanner
+    heading: 2. Battery change and charging safety
+    excerpt: Use the overhead hoist to lift the battery — never manually lift a traction
+      battery; they exceed safe manual handling limits under SOP-SAF-01 §3 by a wide
+      margin.
+  prerequisites: []
+- id: EQP.005
+  name: RF scanner and pick-to-voice operation, error recovery
+  domain: equipment
+  description: Operate the RF scanner and pick-to-voice system, including error recovery.
+  provenance:
+    doc_id: 04-reach-truck-battery-scanner
+    heading: 3. RF scanner and pick-to-voice operation
+    excerpt: Scan the location barcode before scanning the item barcode for every
+      pick or putaway — scanning the item first without confirming location is the
+      single most common cause of location-mismatch inventory errors.
+  prerequisites: []
+- id: PRC.001
+  name: Inbound receiving
+  domain: process
+  description: Receive inbound stock — ASN match, quantity and damage verification.
+  provenance:
+    doc_id: 05-inbound-receiving-putaway
+    heading: '1. Inbound receiving: ASN match, quantity and damage verification'
+    excerpt: Do not accept a delivery with no matching ASN — hold it in the dock quarantine
+      area and notify the shift supervisor.
+  prerequisites: []
+- id: PRC.002
+  name: Putaway rules
+  domain: process
+  description: Apply putaway rules — velocity zones, weight/height, mixed-SKU prohibition.
+  provenance:
+    doc_id: 05-inbound-receiving-putaway
+    heading: '2. Putaway rules: velocity zones, weight/height, mixed-SKU prohibition'
+    excerpt: 'Mixed-SKU prohibition: a single pallet location may never contain more
+      than one SKU, even temporarily.'
+  prerequisites:
+  - PRC.001
+- id: PRC.003
+  name: Pick accuracy
+  domain: process
+  description: Pick accurately — check digits and SKU-vs-lookalike discrimination.
+  provenance:
+    doc_id: 06-picking-packing-dg-coldchain
+    heading: '1. Pick accuracy: check digits, SKU-vs-lookalike discrimination'
+    excerpt: Every pick location has a check digit (a short numeric code posted on
+      the location label) that must be confirmed via RF scanner or spoken back for
+      pick-to-voice (see SOP-EQP-02 §3) before the pick is accepted
+  prerequisites:
+  - EQP.005
+- id: PRC.004
+  name: Packing standards
+  domain: process
+  description: Pack to standard — void fill, fragile handling, weight limits per carton.
+  provenance:
+    doc_id: 06-picking-packing-dg-coldchain
+    heading: 2. Packing standards
+    excerpt: 'Void fill: all empty space in a carton must be filled to prevent movement
+      in transit — under-filling is a packing standards failure even if the item arrives
+      undamaged.'
+  prerequisites: []
+- id: PRC.005
+  name: Dangerous goods recognition
+  domain: process
+  description: Recognise dangerous goods — labels, limited-quantity thresholds, and
+    segregation requirements in the DG bay.
+  regulation: ADR
+  known_misconceptions:
+  - Limited-quantity and excepted-quantity thresholds are routinely conflated, producing
+    under-declared DG shipments (docs/sops/06 §3.2).
+  provenance:
+    doc_id: 06-picking-packing-dg-coldchain
+    heading: 3. Dangerous goods recognition
+    excerpt: DG items must only be handled by operatives who have completed DG recognition
+      training and must be segregated in the designated DG area (PPE per SOP-SAF-01
+      §2).
+  prerequisites:
+  - SAF.001
+- id: PRC.006
+  name: Cold chain
+  domain: process
+  description: Maintain the cold chain — temperature windows, exposure limits, breach
+    escalation.
+  regulation: Reg. (EC) 852/2004
+  provenance:
+    doc_id: 06-picking-packing-dg-coldchain
+    heading: '4. Cold chain: temperature windows, exposure limits, breach escalation'
+    excerpt: Cold chain SKUs have a defined temperature window in the SKU master data
+      (e.g. 2–8°C for chilled, ≤ -18°C for frozen).
+  prerequisites: []
+- id: PRC.007
+  name: Cycle counting and variance reporting
+  domain: process
+  description: Perform cycle counts and report variances.
+  provenance:
+    doc_id: 07-cyclecount-returns-wms
+    heading: 1. Cycle counting and variance reporting
+    excerpt: Variances above the site's tolerance threshold trigger a recount by a
+      second operative before the system quantity is adjusted
+  prerequisites: []
+- id: PRC.008
+  name: Returns triage and disposition coding
+  domain: process
+  description: Triage returns and assign disposition codes.
+  provenance:
+    doc_id: 07-cyclecount-returns-wms
+    heading: 2. Returns triage and disposition coding
+    excerpt: 'Disposition codes: **Restock** (undamaged, resaleable condition, correct
+      item), **Quality hold** (condition uncertain, needs quality review before disposition),
+      **Scrap** (visibly damaged or expired), **Return to vendor** (manufacturing
+      defect within vendor claim window).'
+  prerequisites:
+  - PRC.001
+- id: SAF.001
+  name: PPE selection and correct use per zone
+  domain: safety
+  description: Select and correctly use the PPE mandated for each zone.
+  provenance:
+    doc_id: 01-ppe-manual-handling
+    heading: 2. PPE requirements by zone
+    excerpt: Operating in any zone without the mandatory PPE for that zone is a reportable
+      near-miss even if no injury occurs.
+  prerequisites: []
+- id: SAF.002
+  name: Manual handling principles
+  domain: safety
+  description: Apply manual handling principles — load assessment and base of support.
+  provenance:
+    doc_id: 01-ppe-manual-handling
+    heading: 3. Manual handling — load assessment and base of support
+    excerpt: Bend at the knees, not the waist. Keep the load close to the body. Keep
+      the back straight, avoid twisting while lifting.
+  prerequisites: []
+- id: SAF.003
+  name: Safe lift execution
+  domain: safety
+  description: Execute a safe lift for heavy or awkward loads.
+  provenance:
+    doc_id: 01-ppe-manual-handling
+    heading: 4. Safe lift execution — heavy or awkward loads
+    excerpt: 'Use a hook grip and lift in stages: floor to knee, knee to carrying
+      position — do not lift directly from floor to carrying height in one motion.'
+  prerequisites:
+  - SAF.002
+- id: SAF.004
+  name: Team lift coordination
+  domain: safety
+  description: Coordinate a team lift with verbal signalling.
+  provenance:
+    doc_id: 01-ppe-manual-handling
+    heading: 5. Team lift coordination
+    excerpt: Lift lead gives verbal count ("ready — brace — lift") audible to all
+      participants before any movement begins.
+  prerequisites:
+  - SAF.003
+- id: SAF.005
+  name: Pedestrian–MHE segregation and right of way
+  domain: safety
+  description: Follow pedestrian–MHE segregation rules and right-of-way priority.
+  provenance:
+    doc_id: 02-mhe-pedestrian-incident-response
+    heading: 1. Pedestrian–MHE segregation and right of way
+    excerpt: MHE (powered pallet trucks, reach trucks) always has right of way within
+      its operating lane.
+  prerequisites: []
+- id: SAF.006
+  name: Hazard and near-miss reporting
+  domain: safety
+  description: Follow the hazard and near-miss reporting procedure.
+  provenance:
+    doc_id: 02-mhe-pedestrian-incident-response
+    heading: 2. Hazard and near-miss reporting
+    excerpt: Any hazard (spill, damaged racking, blocked emergency exit, PPE non-compliance)
+      or near-miss (a pedestrian/MHE conflict, a near-fall, equipment malfunction
+      without injury) must be reported before the end of the shift in which it occurred
+  prerequisites: []
+- id: SAF.007
+  name: Emergency evacuation, muster point, roll call
+  domain: safety
+  description: Evacuate to the muster point and complete roll call on an emergency.
+  provenance:
+    doc_id: 02-mhe-pedestrian-incident-response
+    heading: 3. Emergency evacuation
+    excerpt: Do not re-enter the building for any reason, including retrieving personal
+      items, until a supervisor confirms all-clear.
+  prerequisites: []
+- id: SAF.008
+  name: Spill response
+  domain: safety
+  description: Respond to and contain spills — non-hazardous versus hazardous.
+  provenance:
+    doc_id: 02-mhe-pedestrian-incident-response
+    heading: 4. Spill response
+    excerpt: 'Hazardous spills (any chemical, fuel, or unidentified substance): do
+      not attempt to clean up.'
+  prerequisites: []
+- id: SYS.001
+  name: Core transactions
+  domain: systems
+  description: Perform core WMS transactions — goods receipt, location transfer, stock
+    adjustment.
+  provenance:
+    doc_id: 07-cyclecount-returns-wms
+    heading: '3. WMS core transactions: goods receipt, location transfer, stock adjustment'
+    excerpt: '**Stock adjustment**: the only transaction type that changes total on-hand
+      quantity without a corresponding physical movement (used for cycle count corrections,
+      damage write-offs, scrap disposition).'
+  prerequisites: []
+- id: SYS.002
+  name: Exception handling
+  domain: systems
+  description: Handle WMS exceptions — short pick, damage code, blocked stock.
+  provenance:
+    doc_id: 07-cyclecount-returns-wms
+    heading: '4. Exception handling: short pick, damage code, blocked stock'
+    excerpt: '**Blocked stock**: stock flagged unavailable for picking (quality hold,
+      DG documentation pending, cold chain exposure hold per SOP-PRC-02 §4.2).'
+  prerequisites:
+  - PRC.008
+  - SYS.001

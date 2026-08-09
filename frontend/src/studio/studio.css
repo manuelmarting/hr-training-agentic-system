@@ -1,0 +1,496 @@
+/* KG Studio — styled to the Chat Studio look shared with the chat UI (tokens in theme.css):
+   light gray canvas, green accent, Inter for UI chrome, Azeret Mono for technical detail. */
+
+.studio {
+  --graph-edge: #9ca3af;
+  --graph-node-bg: #eceef0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  padding: 1.25rem 1.75rem 3rem;
+  box-sizing: border-box;
+}
+
+.studio__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--surface-border);
+  padding-bottom: 0.75rem;
+}
+.studio__header h1 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+  display: flex;
+  align-items: center;
+}
+.studio__header h1::before {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-right: 0.5em;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.studio__header a {
+  color: var(--accent-dark);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.studio__header a:hover {
+  color: var(--accent);
+}
+
+.studio__toolbar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 1.25rem 0;
+  flex-wrap: wrap;
+}
+.draft-id {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.draft-id code {
+  color: var(--accent-dark);
+  font-family: var(--font-mono);
+}
+
+.studio__error {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  padding: 0.55rem 0.8rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 0.82rem;
+}
+
+.studio__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 400px;
+  gap: 1.25rem;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .studio__body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.studio__left,
+.studio__right {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.graph-canvas {
+  background: var(--surface);
+  border-radius: var(--radius);
+  overflow: auto;
+  max-height: 70vh;
+}
+.graph-node__id {
+  fill: var(--text);
+}
+.graph-node__name {
+  fill: var(--text-muted);
+}
+.graph-node:hover rect:first-of-type {
+  filter: brightness(1.12);
+}
+
+.studio-empty,
+.muted {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+.studio-empty {
+  padding: 2.5rem;
+  text-align: center;
+}
+
+/* Panels ------------------------------------------------------------------ */
+.node-editor,
+.edge-editor,
+.add-node,
+.approve-bar {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 1.1rem;
+}
+
+.node-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.node-editor__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.node-editor__head h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+}
+.node-editor__row {
+  display: flex;
+  gap: 0.6rem;
+}
+.node-editor__row label {
+  flex: 1;
+}
+.node-editor label,
+.add-node label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.studio input,
+.studio select,
+.studio textarea {
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  outline: none;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.studio input::placeholder,
+.studio textarea::placeholder {
+  color: var(--text-muted);
+}
+.studio input:hover,
+.studio select:hover,
+.studio textarea:hover {
+  border-color: var(--accent);
+}
+.studio input:focus,
+.studio select:focus,
+.studio textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.15);
+}
+.studio textarea {
+  resize: vertical;
+}
+
+.origin-badge {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  background: var(--surface-border);
+  color: var(--text-muted);
+}
+.origin-badge--edited,
+.origin-badge--manual {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.provenance {
+  border: 1px dashed var(--surface-border);
+  border-radius: 8px;
+  padding: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--surface-2);
+}
+.provenance h4 {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.provenance--missing {
+  border-color: var(--danger);
+}
+.provenance--missing h4 span {
+  color: var(--danger);
+}
+
+/* Edge editor ------------------------------------------------------------- */
+.edge-editor h4,
+.add-node-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.edge-list {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 160px;
+  overflow: auto;
+}
+.edge-list li {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+}
+.edge-list strong {
+  color: var(--accent-dark);
+}
+.edge-editor__add,
+.add-node {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.warn {
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+
+/* Validation + approve ---------------------------------------------------- */
+.approve-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.validation-banner {
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.82rem;
+}
+.validation-banner--error {
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+.validation-banner--ok {
+  background: var(--ok-soft);
+  border: 1px solid var(--accent);
+  color: var(--accent-dark);
+}
+.validation-banner ul {
+  margin: 0.4rem 0 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.validation-banner code {
+  font-size: 0.72rem;
+  color: var(--text);
+}
+
+.yaml-preview summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.yaml-preview pre {
+  background: #111827;
+  color: #e5e7eb;
+  font-family: var(--font-mono);
+  padding: 0.75rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 0.72rem;
+  max-height: 320px;
+}
+
+/* Buttons ----------------------------------------------------------------- */
+.studio button {
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.1s ease;
+}
+.studio button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.studio button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.studio button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.studio button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.studio button.primary:hover:not(:disabled) {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+}
+.studio button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: transparent;
+}
+.studio button.link,
+.studio button.link-danger {
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  font-size: inherit;
+}
+.studio button.link {
+  color: inherit;
+}
+.studio button.link:hover {
+  color: var(--accent-dark);
+}
+.studio button.link-danger {
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+.approve-btn {
+  align-self: flex-start;
+}
+
+/* Seed-from-SOPs uploader + extraction progress --------------------------- */
+.sop-uploader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 620px;
+  margin-bottom: 1rem;
+}
+.sop-uploader__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sop-uploader__head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.sop-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.sop-list li label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-direction: row;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.sop-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+.sop-list input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+}
+.sop-name {
+  flex: 1;
+}
+.sop-size {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+.sop-uploader input[type="file"] {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.sop-uploader input[type="file"]::file-selector-button {
+  font-family: var(--font-sans);
+  margin-right: 0.6rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.extraction {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 620px;
+}
+.extraction h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.extraction-log {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.extraction-log li.failed {
+  color: var(--danger);
+}
+.spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--surface-border);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

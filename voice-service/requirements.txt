@@ -1,0 +1,7 @@
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+pydantic==2.13.4
+kokoro>=0.9.4
+soundfile
+torch
+numpy

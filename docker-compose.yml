@@ -1,0 +1,41 @@
+services:
+  voice:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.voice
+    ports:
+      - "8001:8001"
+    volumes:
+      - kokoro_cache:/root/.cache/huggingface
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+    env_file:
+      - backend/.env.example
+    environment:
+      - KOKORO_SERVICE_URL=http://voice:8001
+    depends_on:
+      - voice
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/frontend
+      - /frontend/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  kokoro_cache:

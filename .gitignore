@@ -61,6 +61,11 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Studio runtime artifacts (KG-authoring)
+backend/studio.db
+backend/studio.db-journal
+backend/app/kg/generated/
+
 # Flask stuff:
 instance/
 .webassets-cache
@@ -153,6 +158,7 @@ activemq-data/
 .venv
 env/
 venv/
+*venv*/
 ENV/
 env.bak/
 venv.bak/
@@ -216,3 +222,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node / frontend
+node_modules/
+frontend/dist/
+backend/app/static/*
+!backend/app/static/.gitkeep
+
+# Environment files
+.env
+!.env.example
