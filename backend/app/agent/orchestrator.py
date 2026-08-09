@@ -36,6 +36,7 @@ the model happens to do this turn, not something a test can prove holds.
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Literal
 
 import networkx as nx
@@ -52,7 +53,7 @@ from app.agent.subagents.delivery import ABSTAIN_TEXT, compose_delivery
 from app.agent.subagents.remediation import run_remediation
 from app.agent.tools import ORCHESTRATOR_TOOLS
 from app.channels import POLICIES, RenderIntent, render
-from app.kg.loader import DEFAULT_MASTERY_THRESHOLD, next_assessable_kc
+from app.kg.loader import DEFAULT_MASTERY_THRESHOLD, KnowledgeComponent, next_assessable_kc
 from app.mastery import bkt
 from app.persistence.repo import Repo
 from app.rag.retrieve import Citation, Index
@@ -376,27 +377,25 @@ def build_orchestrator(
                 f"opt_out={evaluation.opt_out} (no mastery/kc change)"
             )
 
-        prior = ctx.mastery.get(evaluation.kc_id, bkt.DEFAULT_PARAMS.p_init)
-        posterior = bkt.update(prior, evaluation.classification)
-        ctx.mastery[evaluation.kc_id] = posterior
-        repo.upsert_mastery(state["employee_id"], evaluation.kc_id, posterior)
+        result = _apply_mastery_update(
+            ctx.mastery, evaluation, kg_graph, mastery_threshold, fallback_kc=ctx.current_kc
+        )
+        ctx.mastery = result.mastery
+        repo.upsert_mastery(state["employee_id"], evaluation.kc_id, result.posterior)
         repo.append_event(
             state["session_id"],
             state["turn_index"],
             "mastery_update",
-            {"kc_id": evaluation.kc_id, "prior": prior, "posterior": posterior},
+            {"kc_id": evaluation.kc_id, "prior": result.prior, "posterior": result.posterior},
         )
         ctx.updates["mastery"] = ctx.mastery
-
-        ctx.current_kc = (
-            next_assessable_kc(kg_graph, ctx.mastery, mastery_threshold) or ctx.current_kc
-        )
+        ctx.current_kc = result.current_kc
         ctx.updates["current_kc"] = ctx.current_kc
 
         return (
             f"classification={evaluation.classification} "
             f"confidence={evaluation.confidence:.2f} "
-            f"mastery {evaluation.kc_id} {prior:.2f} -> {posterior:.2f} "
+            f"mastery {evaluation.kc_id} {result.prior:.2f} -> {result.posterior:.2f} "
             f"next_kc={ctx.current_kc}"
         )
 
@@ -452,43 +451,26 @@ def build_orchestrator(
         closing = bool(args.get("closing"))
         kc = kg_graph.nodes[ctx.current_kc]["kc"]
         evaluation_dict = ctx.last_evaluation or {}
-        excerpt = None
-        citation = None
-        abstain_reason = None
-        session_progress = None
-        next_kc_description = kc.description
-        fallback_text = f"Next: {kc.description}"
-        if ctx.last_remediation:
-            if ctx.last_remediation.get("citation"):
-                excerpt = ctx.last_remediation["excerpt"]
-                citation = Citation.model_validate(ctx.last_remediation["citation"])
-                # Verbatim splice as the *fallback-only* safety net if composition
-                # fails after repair — not the primary path.
-                fallback_text = f"{excerpt}\n\n— {citation.doc_id}, “{citation.heading}”"
-                next_kc_description = None
-            else:
-                abstain_reason = ctx.last_remediation.get("knowledge_gap_reason") or "no match"
-                fallback_text = ABSTAIN_TEXT
-                next_kc_description = None
-        if closing:
-            session_progress = _session_progress(repo.list_events(state["session_id"]), kg_graph)
-            if not ctx.last_remediation:
-                # Don't invite another question in a wrap-up turn — unless a
-                # remediation excerpt/abstain already took priority above, which
-                # keeps its own next_kc_description/fallback as-is.
-                next_kc_description = None
-                fallback_text = "That's all for today — thanks for practicing!"
+        session_progress = (
+            _session_progress(repo.list_events(state["session_id"]), kg_graph) if closing else None
+        )
+        delivery_inputs = _select_delivery_inputs(
+            kc=kc,
+            last_remediation=ctx.last_remediation,
+            closing=closing,
+            session_progress=session_progress,
+        )
         delivery = await compose_delivery(
             llm,
             channel=state["channel"],
             language=evaluation_dict.get("language", state.get("language", "en")),
             sentiment=evaluation_dict.get("sentiment", "neutral"),
-            next_kc_description=next_kc_description,
-            excerpt=excerpt,
-            citation=citation,
-            abstain_reason=abstain_reason,
-            session_progress=session_progress,
-            fallback_text=fallback_text,
+            next_kc_description=delivery_inputs.next_kc_description,
+            excerpt=delivery_inputs.excerpt,
+            citation=delivery_inputs.citation,
+            abstain_reason=delivery_inputs.abstain_reason,
+            session_progress=delivery_inputs.session_progress,
+            fallback_text=delivery_inputs.fallback_text,
             employee_profile=state.get("employee_profile"),
             conversation_history=_format_transcript(state.get("messages", [])),
         )
@@ -500,7 +482,7 @@ def build_orchestrator(
                 state["session_id"],
                 state["turn_index"],
                 "remediation_groundedness_warning",
-                {"text": delivery.text, "excerpt": excerpt},
+                {"text": delivery.text, "excerpt": delivery_inputs.excerpt},
             )
         return f"composed: {delivery.text[:80]!r}"
 

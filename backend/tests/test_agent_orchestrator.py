@@ -20,12 +20,133 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 
-from app.agent.orchestrator import _session_progress, build_orchestrator, close_session
-from app.agent.subagents.delivery import DeliveryMessage
-from app.kg.loader import build_digraph, load_kcs
+from app.agent.orchestrator import (
+    _apply_mastery_update,
+    _select_delivery_inputs,
+    _session_progress,
+    build_orchestrator,
+    close_session,
+)
+from app.agent.subagents.delivery import ABSTAIN_TEXT, DeliveryMessage
+from app.kg.loader import (
+    DEFAULT_MASTERY_THRESHOLD,
+    KnowledgeComponent,
+    build_digraph,
+    load_kcs,
+    next_assessable_kc,
+)
+from app.mastery import bkt
 from app.persistence.repo import Repo
-from app.rag.retrieve import build_index_from_sops
+from app.rag.retrieve import Citation, build_index_from_sops
 from app.schemas.extraction import TurnEvaluation
+
+_TEST_KC = KnowledgeComponent(
+    id="SAF.001",
+    name="Test KC",
+    domain="safety",
+    description="how to test knowledge components",
+)
+
+
+def _evaluation(kc_id: str, classification: str) -> TurnEvaluation:
+    return TurnEvaluation(
+        kc_id=kc_id,
+        classification=classification,
+        confidence=0.9,
+        language="en",
+        sentiment="neutral",
+    )
+
+
+def test_apply_mastery_update_computes_bkt_posterior(kg_graph):
+    evaluation = _evaluation("SAF.001", "correct")
+    result = _apply_mastery_update(
+        {}, evaluation, kg_graph, DEFAULT_MASTERY_THRESHOLD, fallback_kc="SAF.001"
+    )
+    assert result.prior == bkt.DEFAULT_PARAMS.p_init
+    assert result.posterior == bkt.update(bkt.DEFAULT_PARAMS.p_init, "correct")
+    assert result.mastery["SAF.001"] == result.posterior
+
+
+def test_apply_mastery_update_advances_to_lowest_id_unmastered_unlocked_kc(kg_graph):
+    """`current_kc` matches what `next_assessable_kc` itself would pick from the
+    resulting mastery dict — not necessarily the KC just graded, since a
+    lower-id, already-unlocked KC can still be the next one up."""
+    evaluation = _evaluation("SAF.001", "incorrect")
+    result = _apply_mastery_update(
+        {}, evaluation, kg_graph, DEFAULT_MASTERY_THRESHOLD, fallback_kc="SAF.001"
+    )
+    assert result.posterior < DEFAULT_MASTERY_THRESHOLD
+    expected_kc = next_assessable_kc(kg_graph, result.mastery, DEFAULT_MASTERY_THRESHOLD)
+    assert result.current_kc == expected_kc
+
+
+def test_apply_mastery_update_falls_back_when_no_kc_is_assessable(kg_graph):
+    """An impossible-to-clear threshold makes `next_assessable_kc` return `None`
+    (no unlocked KC is below threshold) — the caller's `fallback_kc` is used."""
+    evaluation = _evaluation("SAF.001", "correct")
+    result = _apply_mastery_update({}, evaluation, kg_graph, -1.0, fallback_kc="SAF.001")
+    assert result.current_kc == "SAF.001"
+
+
+def test_select_delivery_inputs_cited_remediation_takes_priority():
+    last_remediation = {
+        "excerpt": "wear gloves at all times",
+        "citation": {"doc_id": "03-ppt-operation", "heading": "PPE"},
+    }
+    inputs = _select_delivery_inputs(
+        kc=_TEST_KC, last_remediation=last_remediation, closing=False, session_progress=None
+    )
+    assert inputs.excerpt == "wear gloves at all times"
+    assert inputs.citation == Citation(doc_id="03-ppt-operation", heading="PPE")
+    assert inputs.abstain_reason is None
+    assert inputs.next_kc_description is None
+    assert "wear gloves at all times" in inputs.fallback_text
+
+
+def test_select_delivery_inputs_abstained_remediation():
+    last_remediation = {"knowledge_gap_reason": "no matching SOP section"}
+    inputs = _select_delivery_inputs(
+        kc=_TEST_KC, last_remediation=last_remediation, closing=False, session_progress=None
+    )
+    assert inputs.excerpt is None
+    assert inputs.citation is None
+    assert inputs.abstain_reason == "no matching SOP section"
+    assert inputs.next_kc_description is None
+    assert inputs.fallback_text == ABSTAIN_TEXT
+
+
+def test_select_delivery_inputs_no_remediation_not_closing():
+    inputs = _select_delivery_inputs(
+        kc=_TEST_KC, last_remediation=None, closing=False, session_progress=None
+    )
+    assert inputs.next_kc_description == _TEST_KC.description
+    assert inputs.fallback_text == f"Next: {_TEST_KC.description}"
+
+
+def test_select_delivery_inputs_closing_without_remediation():
+    inputs = _select_delivery_inputs(
+        kc=_TEST_KC, last_remediation=None, closing=True, session_progress="2 asked"
+    )
+    assert inputs.next_kc_description is None
+    assert inputs.fallback_text == "That's all for today — thanks for practicing!"
+    assert inputs.session_progress == "2 asked"
+
+
+def test_select_delivery_inputs_closing_with_remediation_keeps_remediation_content():
+    """A wrap-up turn that also remediated a knowledge gap this turn should still
+    surface that content, not the generic "that's all for today" fallback."""
+    last_remediation = {
+        "excerpt": "wear gloves at all times",
+        "citation": {"doc_id": "03-ppt-operation", "heading": "PPE"},
+    }
+    inputs = _select_delivery_inputs(
+        kc=_TEST_KC, last_remediation=last_remediation, closing=True, session_progress="2 asked"
+    )
+    assert inputs.next_kc_description is None
+    assert "wear gloves at all times" in inputs.fallback_text
+    assert inputs.session_progress == "2 asked"
+
 
 GRAPH_PATH = Path(__file__).parent.parent / "app" / "kg" / "graph.yaml"
 SOPS_DIR = Path(__file__).parent.parent.parent / "docs" / "sops"
@@ -600,7 +721,6 @@ async def test_mastery_is_replayable_when_policy_is_followed(kg_graph, rag_index
     """Not a guarantee of the architecture (CLAUDE.md documents that gap) --
     this proves the plumbing preserves replayability when the scripted policy
     follows the same grade-then-update sequence the system prompt asks for."""
-    from app.mastery import bkt
 
     repo = Repo(":memory:")
     classifications = ["correct", "incorrect", "partial", "correct", "correct"]
