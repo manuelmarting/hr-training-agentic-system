@@ -14,5 +14,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
 COPY --from=frontend-build /backend/app/static ./app/static
 
+# app/agent/runtime.py locates the SOP corpus via `parents[3]` relative to its own
+# file (repo-root-relative on a local checkout); the image is one directory level
+# shallower than the source tree, so that arithmetic lands on /docs/sops here.
+COPY docs /docs
+
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

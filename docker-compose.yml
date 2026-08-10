@@ -18,6 +18,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend/app:/app/app
+      - ./docs:/docs:ro
     env_file:
       - backend/.env.example
     environment:
@@ -34,6 +35,8 @@ services:
     volumes:
       - ./frontend:/frontend
       - /frontend/node_modules
+    environment:
+      - VITE_API_PROXY_TARGET=http://backend:8000
     depends_on:
       - backend
 

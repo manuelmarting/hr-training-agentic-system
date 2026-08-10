@@ -9,7 +9,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://localhost:8000",
+      // Overridden in Docker Compose (`VITE_API_PROXY_TARGET=http://backend:8000`):
+      // the dev server runs inside its own container there, so "localhost" would
+      // otherwise point at itself instead of the backend service.
+      "/api": process.env.VITE_API_PROXY_TARGET || "http://localhost:8000",
     },
   },
 });
