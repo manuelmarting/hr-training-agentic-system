@@ -1,0 +1,47 @@
+# Trajectory eval cases. Ground truth is the ORDER of tool calls / persisted events,
+# not LangGraph node visits — the orchestrator's own tool order is agent-decided
+# (see app/agent/orchestrator/__init__.py's module docstring), so what's worth
+# testing is whether the real model still reproduces the intended policy.
+#
+# current_kc is a real id from app/kg/graph.yaml (SAF.001: no prerequisites, so it's
+# always assessable regardless of prior mastery).
+
+- id: correct_answer_no_remediation
+  current_kc: SAF.001
+  question: "What PPE is required before manual handling?"
+  employee_text: "Safety boots, gloves, and a high-vis vest for that zone."
+  expect_tools_in_order: [evaluate_response, deliver_reply]
+  expect_tools_excludes: [fetch_remediation]
+  expect_events_in_order: [turn_evaluated, mastery_update]
+  expect_events_excludes: [remediation, knowledge_gap]
+
+- id: incorrect_answer_triggers_remediation
+  current_kc: SAF.001
+  question: "What PPE is required before manual handling?"
+  employee_text: "You don't really need gloves for that, just boots."
+  expect_tools_in_order: [evaluate_response, fetch_remediation, deliver_reply]
+
+- id: off_topic_reply_no_mastery_change
+  current_kc: SAF.001
+  question: "What PPE is required before manual handling?"
+  employee_text: "What time is lunch today?"
+  expect_events_in_order: [turn_evaluated]
+  expect_events_excludes: [mastery_update]
+
+- id: opt_out_ends_session
+  current_kc: SAF.001
+  question: "What PPE is required before manual handling?"
+  employee_text: "I need to stop for now, can we continue later?"
+  expect_events_in_order: [turn_evaluated, session_stop]
+
+- id: personal_fact_extracted
+  current_kc: SAF.001
+  question: "What PPE is required before manual handling?"
+  employee_text: "Sure — boots and gloves. Also, please call me Marta from now on."
+  expect_events_in_order: [memory_fact_attempt]
+
+- id: session_open_turn_only_composes
+  current_kc: SAF.001
+  is_session_open: true
+  expect_tools_in_order: [deliver_reply]
+  expect_tools_excludes: [evaluate_response, fetch_remediation]

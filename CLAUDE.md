@@ -4,7 +4,7 @@ Guidance for Claude Code when working in this repository.
 
 ## What this project is
 
-**Sofía** — a continuous training & assessment agent for frontline employees (MVP slice). Read **`docs/PRD.md`** before implementing anything; `docs/VISION.md` holds the full product rationale. The slice's hard parts are: KG-driven KC selection with prerequisite gating, deterministic BKT mastery updates (never computed by the LLM), grounded remediation with mandatory citations, a fail-closed PII gate, channel-adaptive rendering (Telegram-style text vs. voice), and the employer-facing KG-authoring studio (PRD §8).
+**Sofía** — a continuous training & assessment agent for frontline employees (MVP slice). Read **`docs/PRD.md`** before implementing anything; `docs/VISION.md` holds the full product rationale. The slice's hard parts are: KG-driven KC selection with prerequisite gating, BKT mastery updates, grounded remediation with mandatory citations, a fail-closed PII gate, and the employer-facing KG-authoring studio (PRD §8).
 
 Do NOT use OpenSpec in this repo — implement directly.
 
@@ -41,9 +41,9 @@ Run `ruff check` and `pytest` after every backend change; `npm run lint` and `np
 ### Simplicity first
 
 - Prefer the simplest implementation that satisfies the PRD. This is a scoped 4–6h assignment slice, not production infrastructure.
-- Pure functions over classes where possible (the BKT mastery engine MUST be pure functions with unit tests).
+- Pure functions over classes where possible (the BKT mastery engine should be pure functions with unit tests).
 - 24 KCs live in YAML loaded into `networkx` — no Neo4j. SQLite — no Postgres server required. Single process — no Kafka; events are validated JSON emitted in-process.
-- Don't add abstraction layers, config options, or generality the PRD doesn't ask for. Mocked boundaries (Telegram creds, telephony, Maria/Daniel/Clare) stay mocked — see PRD §6.2.
+- Don't add abstraction layers, config options, or generality the PRD doesn't ask for. Mocked boundaries (telephony, Maria/Daniel/Clare) stay mocked — see PRD §6.2.
 
 ### Pydantic everywhere data crosses a boundary
 
@@ -68,7 +68,7 @@ Conventions:
 - Graph state is a typed schema (TypedDict or Pydantic model); nodes are small functions that take state and return partial updates.
 - Use LangGraph `interrupt` for the safety-escalation path (injury/harassment/distress → suspend + handoff).
 - Use `.with_structured_output(PydanticModel)` for extraction (grading, memory, delivery composition); wrap it with the repair-pass logic above. Use `.bind_tools(...)` only for the orchestrator's own tool-selection loop.
-- Tools the orchestrator can call are thin dispatch targets, not the logic itself: `app/agent/tools.py` only defines names/descriptions/schemas for `.bind_tools()`; `orchestrator.py`'s `tools_node` is what actually invokes the mastery engine, KG traversal, PII gate, and channel policy — all still plain Python modules, still unit-testable without an LLM, and never handed the model's own tool-call arguments for anything that needs to stay deterministic (e.g. `update_mastery` reads the prior grading result from state, not from an LLM-supplied number).
+- Tools the orchestrator can call are thin dispatch targets, not the logic itself: `app/agent/tools.py` only defines names/descriptions/schemas for `.bind_tools()`; `orchestrator.py`'s `tools_node` is what actually invokes the mastery engine, KG traversal, and PII gate — all still plain Python modules, still unit-testable without an LLM.
 
 ## Python best practices
 
@@ -76,7 +76,7 @@ Conventions:
 - Ruff is the formatter and linter (line length 100, rules `E,F,I,UP,B`). No `# noqa` without a reason.
 - Small modules with single responsibility; `pathlib` over `os.path`; f-strings; dataclasses/Pydantic over dict-passing.
 - Async in FastAPI routes; don't block the event loop (LLM calls and DB access use async clients or `run_in_executor`).
-- Tests: pytest, mirroring PRD §6.1's list — extraction accuracy, mastery math, unlock rules, PII gate (including special-category attempts), channel policy, adversarial/injection inputs, grounding-abstain. Deterministic logic gets exhaustive unit tests; LLM-dependent paths get contract tests with stubbed LLM responses.
+- Tests: pytest, mirroring PRD §6.1's list — extraction accuracy, mastery math, unlock rules, PII gate (including special-category attempts), adversarial/injection inputs, grounding-abstain.
 - No secrets in code — `.env` via `pydantic-settings` (see `backend/.env.example`).
 
 ## Frontend best practices
@@ -90,4 +90,4 @@ Conventions:
 
 ## Non-goals — do not build
 
-Auth, multi-tenancy, admin UI, real Telegram/telephony integrations, Neo4j, Kafka, Clare dashboard, certifications, or anything feeding performance management (PRD §3). If a task seems to need one of these, stop and re-read the PRD's mock strategy (§6.2).
+Auth, multi-tenancy, admin UI, real telephony integrations, Neo4j, Kafka, Clare dashboard, certifications, or anything feeding performance management (PRD §3). If a task seems to need one of these, stop and re-read the PRD's mock strategy (§6.2).

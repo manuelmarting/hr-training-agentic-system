@@ -16,21 +16,22 @@ Sentiment = Literal["neutral", "confident", "frustrated", "distressed"]
 
 # Allowlisted personal-fact types (PRD §7: "allowlisted types only"). Anything not in
 # this set — health, religion, ethnicity, union membership, sexuality, biometrics — is
-# a special category and must never reach this model; `memory/pii_gate.py` enforces
-# that before a `PersonalFact` is ever constructed from LLM output.
+# a special category and must never reach this model;
+# `agent/tools/extract_facts/pii_gate.py` enforces that before a `PersonalFact` is
+# ever constructed from LLM output.
 PersonalFactType = Literal[
     "preferred_name",
     "preferred_language",
     "shift_pattern",
     "contact_time_preference",
-    "channel_preference",
 ]
 
 
 class TurnEvaluation(BaseModel):
     """The one LLM call per turn: grade the answer, tag language and sentiment.
 
-    Backs the orchestrator's single `assess_reply` tool (`app/agent/tools.py`), which
+    Backs the orchestrator's single `evaluate_response` tool
+    (`app/agent/tools/__init__.py`), which
     grades, updates BKT mastery, and advances the KC selection all from this one
     evaluation — there is no longer a separate grade/update-mastery/select-next-kc
     split at the tool-calling layer.

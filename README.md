@@ -37,7 +37,6 @@ flowchart TB
             BKT["mastery/bkt.py\npure-function BKT update"]
             RAG["rag/retrieve.py\nBM25 over SOP chunks\ncite-or-abstain"]
             PII["memory/pii_gate.py\nfail-closed allowlist"]
-            Channels["channels.py\nchannel-adapted rendering"]
             Repo["persistence/repo.py"]
             TTSClient["agent/tts.py\nbest-effort call"]
         end
@@ -69,7 +68,6 @@ flowchart TB
     Orchestrator --> BKT
     Orchestrator --> RAG --> SOPs
     Orchestrator --> PII
-    Orchestrator --> Channels
     Orchestrator --> Repo --> RuntimeDB
     Orchestrator -. "best-effort" .-> TTSClient -. "audio (base64) or degrade to text" .-> Voice
 
@@ -90,7 +88,6 @@ flowchart TB
 | `mastery/bkt.py` | Prior mastery, turn correctness | Updated mastery (pure function) | Bayesian Knowledge Tracing — never computed by the LLM |
 | `rag/retrieve.py` | Query text | Cited chunk or abstain | BM25 over the 8-doc SOP corpus; below-threshold → abstain, never fabricate |
 | `memory/pii_gate.py` | Candidate personal fact | Store / reject | Fail-closed allowlist; special-category disclosures acknowledged, never persisted |
-| `channels.py` | Composed reply, channel type | Channel-adapted text | Telegram-style text vs. voice-oriented phrasing |
 | `persistence/repo.py` | Mastery deltas, facts, events | Rows in `runtime.db` | Sole writer of the runtime SQLite schema |
 | `studio/extract.py` | Raw SOP text | Draft KCs + `prerequisite_of` edges | LLM proposes a taxonomy; never auto-applied |
 | `studio/materialize.py` | Approved draft | `app/kg/graph.yaml` | Only path that writes the graph the runtime reads — gated on explicit human approval |
@@ -131,7 +128,7 @@ flowchart TD
         T3["extract_personal_fact"] --> ExtractFact["extract_and_gate_fact()\napp/agent/nodes/memory.py"]
         ExtractFact --> Gate["pii_gate\napp/memory/pii_gate.py"]
 
-        T4["compose_delivery"] --> Render["render()\napp/channels.py\nchannel-adapted text"]
+        T4["compose_delivery"]
 
         T5["end_session"]
     end
@@ -145,7 +142,7 @@ flowchart TD
     Finalize -.->|"checkpoint written"| CP
 ```
 
-**Pattern**: single-agent ReAct (bind-tools + loop), not a multi-agent handoff graph — `remediate` and `compose_delivery` dispatch into subagent-style modules (`app/agent/subagents/`) but those run as plain function calls inside `tools_node`, not as separate graph nodes with their own state. The five tool schemas (`app/agent/tools.py`) define only names/descriptions/args for `.bind_tools()`; `tools_node` is what actually invokes the mastery engine, KG traversal, PII gate, and channel policy, so grading, unlock rules, retrieval-or-abstain, and the PII allowlist stay unit-testable without an LLM and immune to prompt injection changing their output.
+**Pattern**: single-agent ReAct (bind-tools + loop), not a multi-agent handoff graph — `remediate` and `compose_delivery` dispatch into subagent-style modules (`app/agent/subagents/`) but those run as plain function calls inside `tools_node`, not as separate graph nodes with their own state. The five tool schemas (`app/agent/tools.py`) define only names/descriptions/args for `.bind_tools()`; `tools_node` is what actually invokes the mastery engine, KG traversal, and PII gate, so grading, unlock rules, retrieval-or-abstain, and the PII allowlist stay unit-testable without an LLM and immune to prompt injection changing their output.
 
 ## Implementation
 
@@ -176,7 +173,7 @@ A conversational agent needs a skills graph to teach against, and no organizatio
 
 The KG-authoring studio ([`backend/app/studio/`](backend/app/studio/), `frontend/src/studio/`) automates the first pass: an employer uploads SOP documents, an LLM proposes a KC taxonomy and `prerequisite_of` graph with each node traced to its source SOP excerpt, and nothing reaches the runtime agent until a human approves it — the same fail-closed, human-in-the-loop pattern as the PII gate, applied to graph authorship. This is what makes the graph the agent runs against a maintainable input rather than a fixture.
 
-185 backend tests: extraction accuracy, mastery math, unlock rules, PII gate (including special-category attempts), channel policy, adversarial/injection inputs, grounding-abstain behavior. See `backend/tests/`.
+185 backend tests: extraction accuracy, mastery math, unlock rules, PII gate (including special-category attempts), adversarial/injection inputs, grounding-abstain behavior. See `backend/tests/`.
 
 ## Repository layout
 
@@ -205,11 +202,10 @@ The KG-authoring studio ([`backend/app/studio/`](backend/app/studio/), `frontend
 
 ## Potential improvements
 
-- **Trajectory-level agent evals.** Current tests validate individual nodes/tools against stubbed LLM responses (grading accuracy, mastery math, gating, PII gate) but not whole multi-turn trajectories. Needed: transcript-level scoring against target behaviors — e.g. distress disclosure reaches the escalation state within N turns, ungrounded questions produce an abstain across paraphrase variants, injection attempts never influence grading — run over a range of adversarial/paraphrased inputs.
 - **Redis as the hot-path session store.** Session state currently lives in a SQLite LangGraph checkpointer, which is durable but not built for many concurrent low-latency sessions across channels/instances. Redis for active-session reads/writes, with SQLite/Postgres retained as the durable system of record, would cut per-turn latency and remove the constraint that session state is pinned to one process's local file.
 - **Role as a first-class entity; one KG per role.** The seed graph is a single `warehouse_operative` graph in `app/kg/graph.yaml`. A deployment needs multiple roles (picker, forklift operator, shift supervisor, ...), each with its own KC set and prerequisite structure, with some KCs shared across roles (e.g. safety fundamentals). Requires: studio pipeline runs per role against that role's SOPs, employee records link to one or more roles, orchestrator selects the graph from the employee's role instead of assuming one global graph, shared KCs deduplicated across role graphs.
 - **Broader tutoring output.** Remediation currently cites the SOP paragraph an employee got wrong; it does not recommend further material. Add: links to internal documentation, SOP sections, or training videos per weak KC. Add: an on-demand mastery summary across an employee's full role graph, for the employee directly and, in aggregate, for supervisors/HR.
-- Real Telegram/telephony adapters — channel policy is adapter-interface-tested against a mock; the real adapter is estimated at ~100 lines (`docs/PRD.md` §6.2).
+- **A more expressive TTS voice.** Kokoro-82M is a good self-hosted default and was the right choice for this slice — free, local, no external dependency. A production deployment would swap it for a more professional provider, e.g. ElevenLabs, to give the voice output more personality and warmth than Kokoro's output currently has.
 - Swap `networkx` → Neo4j and SQLite → Postgres once KC/employee counts exceed single-process scope; both are behind swappable-backend interfaces already.
 - Versioning/diffing an approved KG against a re-uploaded SOP set (currently single-approve-pass only).
 - Multi-reviewer approval / role-based access on the studio UI (no auth in this build).
@@ -236,6 +232,60 @@ npm install
 npm run dev      # dev server on :5173, proxies /api to :8000
 npm run build     # outputs into ../backend/app/static, served by FastAPI at /
 ```
+
+## Evals
+
+`backend/evals/` is a second, opt-in tier on top of `backend/tests/`. `tests/` stubs
+the LLM boundary — deterministic, free, part of the `ruff check && pytest` CI gate.
+`evals/` calls a **real** LLM provider and scores quality/grounding/trajectory rather
+than asserting exact output — non-deterministic, costs real tokens, judged score
+rather than pass/fail, not part of the CI gate (`pyproject.toml`'s `testpaths` is
+`["tests"]`, so a plain `pytest` never collects it).
+
+```bash
+cd backend
+pytest evals -m eval                                    # all evals, gemini/gemini
+EVAL_JUDGE_PROVIDER=anthropic pytest evals -m eval       # gemini agent, anthropic judge
+pytest evals -m eval -k trajectories                     # one category
+```
+
+Provider defaults to Gemini for both the agent and the judge being graded; each is
+independently overridable (`EVAL_AGENT_PROVIDER` / `EVAL_JUDGE_PROVIDER`), and a
+grading judge is never the same model instance that produced the output it's
+grading. A case skips cleanly if the selected provider's key isn't configured.
+
+| Eval | Dataset / grader | Checks |
+|---|---|---|
+| `test_trajectories.py` | `datasets/trajectories.yaml`, `graders/trajectory.py` | Glass-box: does the real model's tool-call order for a turn match the intended policy (evaluate before remediating, PII gate before persisting a fact, session-open turns never call `evaluate_response`)? |
+| `test_grounding.py` | `datasets/remediation_grounding.yaml`, `graders/grounding.py` | Faithfulness: real SOP retrieval + real paraphrasing call, then an LLM judge checks every factual claim is entailed by its cited excerpt; also covers the abstain path for unmatched questions. |
+| `test_conversation_quality.py` | `datasets/conversation_quality.yaml`, `graders/judge.py` | LLM-as-judge: does the reply read the way a frontline employee would expect, does it reflect the turn's actual grading classification, does the stated next step match what happened. Scored 1-5, pass threshold 4. |
+
+See [`backend/evals/README.md`](backend/evals/README.md) for the full tier-1-vs-tier-2
+rationale and how to add a case.
+
+### Latest run
+
+`pytest evals -m eval`, gemini/gemini (default providers), 2026-08-10:
+
+```
+evals/test_conversation_quality.py ....                                  [ 28%]
+evals/test_grounding.py ....                                             [ 57%]
+evals/test_trajectories.py ..FF..                                        [100%]
+
+2 failed, 12 passed in 140.24s (0:02:20)
+```
+
+- `test_conversation_quality.py` — 4/4 passed.
+- `test_grounding.py` — 4/4 passed.
+- `test_trajectories.py` — 4/6 passed; 2 failures:
+  - `off_topic_reply_no_mastery_change` — real failure: expected tool sequence
+    included `turn_evaluated` but the model's actual trajectory was empty for
+    this case, so the grader flagged a genuine policy mismatch worth
+    investigating, not a flaky run.
+  - `opt_out_ends_session` — not a grading failure: Gemini's free-tier
+    `gemini-3.1-flash-lite` quota (429 `RESOURCE_EXHAUSTED`, 15 requests/min)
+    was exhausted mid-run. Re-running this case alone (or with
+    `EVAL_AGENT_PROVIDER=anthropic`) should resolve it.
 
 ## Voice service (Kokoro TTS)
 
@@ -273,6 +323,19 @@ docker compose up --build
 ## Tooling
 
 - **Lint/format**: `ruff` (backend), `eslint` (frontend).
-- **Tests**: `pytest` (backend) — 185 tests across extraction, mastery, KG gating, PII, channels, RAG, studio, persistence.
+- **Tests**: `pytest` (backend) — 185 tests across extraction, mastery, KG gating, PII, RAG, studio, persistence.
+- **Evals**: `pytest evals -m eval` (backend) — opt-in, real-LLM trajectory/grounding/conversation-quality scoring, not part of the CI gate. See [Evals](#evals).
 - **Pre-commit**: `pip install pre-commit && pre-commit install` runs ruff on commit.
 - **CI**: GitHub Actions runs ruff + pytest + frontend lint/build on push/PR.
+
+## Time spent
+
+Measure of time spent working on this project via Claude Code. Computed by pooling message timestamps from all local Claude Code session transcripts for this repo, sorting them chronologically, and merging consecutive timestamps into work blocks whenever the gap between them is ≤10 minutes (larger gaps start a new block). The total is the sum of all block durations.
+
+**Total: ~9h 41m**, across 21 work blocks over 3 calendar days:
+
+| Date | Active time |
+|---|---|
+| 2026-08-08 | ~5h 19m |
+| 2026-08-09 | ~4h 07m |
+| 2026-08-10 | ~15m |

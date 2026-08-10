@@ -11,9 +11,9 @@
 
 ## 1. TL;DR
 
-Sofía is a multi-channel, multi-language agent that runs short conversational assessments and micro-training sessions with frontline employees, maintains a per-employee mastery model over a role-specific skills knowledge graph, and emits structured competency, risk and action data. The wedge: **completion is not competence**, and today nobody can answer "which of my people can actually do the thing, right now?"
+Sofía is a multi-language agent that runs short conversational assessments and micro-training sessions with frontline employees, maintains a per-employee mastery model over a role-specific skills knowledge graph, and emits structured competency, risk and action data. The wedge: **completion is not competence**, and today nobody can answer "which of my people can actually do the thing, right now?"
 
-This PRD scopes the **narrow vertical slice** built for the assignment: the hard parts of the real system (KG-driven selection, deterministic mastery updates, grounded remediation, the PII gate, channel adaptation) implemented and tested, with everything else explicitly mocked.
+This PRD scopes the **narrow vertical slice** built for the assignment: the hard parts of the real system (KG-driven selection, deterministic mastery updates, grounded remediation, the PII gate) implemented and tested, with everything else explicitly mocked.
 
 ---
 
@@ -26,7 +26,7 @@ Frontline employers are legally obliged to train workers and keep them competent
 ## 3. Goals and non-goals
 
 ### Goals
-- Demonstrate a channel-agnostic conversational core that adapts pedagogy to Telegram-style text vs. voice.
+- Demonstrate a conversational core with best-effort spoken output (TTS) alongside the text turn.
 - Show knowledge-graph-driven KC selection with prerequisite gating.
 - Show deterministic, auditable mastery updates (BKT), never computed by the LLM.
 - Show grounded remediation: procedural claims must cite a source SOP or the agent abstains.
@@ -37,7 +37,7 @@ Frontline employers are legally obliged to train workers and keep them competent
 - Authoring long-form content or replacing an LMS.
 - Issuing legally valid certifications.
 - Performance management, ranking, or termination input — never in scope for Sofía at all.
-- Real production integrations (WhatsApp/Telegram/telephony credentials, Neo4j, Kafka, live Maria/Daniel/Clare).
+- Real production integrations (telephony credentials, Neo4j, Kafka, live Maria/Daniel/Clare).
 - Auth, multi-tenancy, admin UI, Clare dashboard.
 
 ---
@@ -51,9 +51,9 @@ Frontline employers are legally obliged to train workers and keep them competent
 | **Lucía**, HR/L&D lead | Prove training coverage to an auditor without chasing people |
 
 Priority stories for the slice (see VISION.md §5.1 for full list):
-1. Employee completes a short assessment over Telegram, in their own language.
+1. Employee completes a short assessment in chat, in their own language.
 2. Employee gets immediate, explained feedback on wrong answers.
-3. Employee can do a session by voice, hands-free.
+3. Employee gets a spoken read-back of each reply, best-effort.
 4. Employee can say "not now" and be rescheduled.
 5. Employee can see and delete what Sofía remembers about them.
 6. Session escalates immediately to a human on injury/harassment/distress.
@@ -92,7 +92,7 @@ Example: `KC.PRC.005` (dangerous-goods recognition) requires `SAF.001` as prereq
 | Capability | Implementation |
 |---|---|
 | Conversation core | Python + LangGraph state machine; SQLite checkpointer (`AsyncSqliteSaver`); resumable across hours |
-| Channels | Two adapters, one core: Telegram (≤4096 char, inline buttons, async) and voice (STT/TTS, longer turns, spoken confirmation) |
+| Voice output | Best-effort TTS (Kokoro) read-back of each turn's reply alongside the text; an unreachable TTS service degrades to text-only, never fails the turn |
 | Chat UI mastery panel | Web chat surface renders a live panel on the right-hand side of the conversation listing the KCs being exercised in the current session, each with a mastery-probability indicator that updates turn-by-turn as BKT posteriors update |
 | Chat UI layout & agent transparency | Full-height, three-column chat surface (VISION.md-aligned demo chrome, not a separate app): a left-hand rail streaming the personal-fact/memory items as they're extracted turn-by-turn, a center conversation column labeled **Sofía** as the agent identity, and the right-hand mastery panel above. Each Sofía turn is preceded by a collapsed, greyed-out "reasoning" container (expandable) showing the agent's reasoning trace and any tool calls made for that turn, before the rendered reply. Employee messages render any attached profile photo inline in a WhatsApp-style rounded chat bubble |
 | Knowledge graph | 24 KCs in YAML, loaded into `networkx`; prerequisite/unlock traversal. Materialized by the §8 studio pipeline from the SOP corpus below, not hand-typed |
@@ -105,13 +105,13 @@ Example: `KC.PRC.005` (dangerous-goods recognition) requires `SAF.001` as prereq
 | Persistence | SQLite with real T2 (learner model) / T3 (personal facts) / T4 (episodic archive) schemas; replayable events |
 | Escalation | Interrupt path for injury/harassment/distress → suspend, hand off, minimal retention |
 | User opt-out / session pause | Employee can refuse training ("not now"); classified as off-topic, emits SessionStop event, session pauses — resumes only if rescheduled by the system or employee re-joins manually |
-| Tests | pytest: extraction accuracy, mastery math, unlock rules, PII gate, channel policy, adversarial/injection inputs, grounding-abstain behavior |
+| Tests | pytest: extraction accuracy, mastery math, unlock rules, PII gate, adversarial/injection inputs, grounding-abstain behavior |
 
 ### 6.2 Mocked / out of scope (stated explicitly)
 
 | Mocked | Why | What proves it works anyway |
 |---|---|---|
-| Real Telegram/telephony creds | No business account, provisioning time | Adapter interface + policy enforced and tested; real adapter is ~100 lines |
+| Real telephony creds (for voice input) | No business account, provisioning time | Text-only session; TTS output is real, speech input is not attempted |
 | Neo4j | 24 KCs fit in `networkx` | Same traversal API, swappable backend |
 | Kafka / event bus | Single process | Events emitted as validated JSON matching real schemas |
 | Maria / Daniel / Clare | Not available | Contract fixtures + schema validation at the boundary, including purpose-limitation filtering |
@@ -127,7 +127,6 @@ Adapted from VISION.md §10.1 to the slice's scope:
 - **Multi-turn assessment**: every turn produces a validated structured record (KC, classification, misconception match, confidence) persisted before the next turn. Schema failures trigger a repair pass, never a crash. Context holds across ≥12 turns and a ≥4h resume gap.
 - **Live KC mastery panel in chat UI**: the web chat surface shows a panel to the right of the conversation listing the knowledge component(s) the employee is currently being assessed on, each with its current mastery probability. As the conversation progresses and BKT posteriors update from the employee's answers, each KC's displayed probability updates in step (increasing on correct/confirming evidence, per the BKT update in §7's mastery-engine requirement) — the panel is a live view onto the mastery engine's state, not a separate mock. This is a lightweight in-session view scoped to the demo chat UI; it is distinct from, and does not replace, the out-of-scope Clare dashboard (§3, §6.2).
 - **Chat UI layout, agent identity, and reasoning transparency**: the chat surface occupies the full vertical height of the window, with the right-hand margin reserved for the mastery panel above so the two never compete for space. The agent's turns are labeled **Sofía** throughout the UI — no generic "assistant" or "bot" labeling. Each Sofía turn renders a collapsed, greyed-out, expandable container immediately above the reply, holding that turn's reasoning trace and the list of tool calls (name + key args) it made before answering; collapsed by default so it doesn't compete with the conversation for attention, but always present so the interaction stays auditable to the employee/reviewer. When the employee's turn includes a profile photo, it renders inline inside their chat bubble, WhatsApp-style (rounded bubble, image inset at the top, any accompanying text below). To the left of the conversation, a **memory extraction log** streams each `PersonalFact` (or attempted-and-rejected fact, per the PII gate in §7) as a timestamped line the moment it's extracted, so fact capture is visible in real time rather than only inspectable after the session ends.
-- **Channel-adaptive rendering**: same pedagogical intent renders differently per channel per a declarative, tested policy.
 - **KC selection with unlock gating**: no KC assessed while a prerequisite is unmastered, unless explicitly in campaign scope (and logged). A KC's `superseded_by_kc_id` invalidates and re-queues affected mastery on SOP version change.
 - **Deterministic mastery updates**: every change traceable to an observation with session/turn provenance; replayable from the event log.
 - **Non-PII personal-fact memory**: allowlisted types only; special-category content never written; both classifiers (pattern + LLM) must pass; employee can view/delete facts.
@@ -182,9 +181,9 @@ A fourth, short demo beat (~1–2 min) alongside the three in §9, using the rea
 
 Three conversations (~6 min total), detailed in VISION.md §14.3:
 
-1. **Happy path** — Telegram, Spanish, day-30 checkpoint: prior from Maria seeds mastery, assessment confirms and unlocks a KC, a failed item triggers grounded remediation with citation, mastery updates live, a personal fact is extracted, session emits summary + risk.
+1. **Happy path** — Spanish, day-30 checkpoint: prior from Maria seeds mastery, assessment confirms and unlocks a KC, a failed item triggers grounded remediation with citation, mastery updates live, a personal fact is extracted, session emits summary + risk.
 2. **Adversarial / edge cases** — mixed ES-RO: frustration triggers tone adaptation; a prompt-injection attempt is refused and logged; a health disclosure is acknowledged but not stored and routed to a human channel; an uncovered question causes abstain + gap flag; employee requests their memory view.
-3. **Voice call** — English, recertification nudge: short spoken turns, digit confirmation, snooze honored and rescheduled, cross-channel continuity resuming on Telegram.
+3. **Recertification nudge** — English, spoken read-back: TTS reads each reply back alongside the text, snooze honored and rescheduled.
 
 Plus the KG-authoring beat in §8.5.
 
@@ -192,7 +191,7 @@ Plus the KG-authoring beat in §8.5.
 
 ## 10. Time budget
 
-~7.5h total, core requirements landing at ~5h (VISION.md §14.5): KG + items + SOP corpus (1.0h), conversation core (1.5h), mastery engine + tests (1.0h), extraction/PII gate/memory (1.0h), RAG + citations (0.5h), channel adapters + voice (1.0h), tests/evals/README/demo (1.5h).
+~7.5h total, core requirements landing at ~5h (VISION.md §14.5): KG + items + SOP corpus (1.0h), conversation core (1.5h), mastery engine + tests (1.0h), extraction/PII gate/memory (1.0h), RAG + citations (0.5h), voice output (1.0h), tests/evals/README/demo (1.5h).
 
 ---
 

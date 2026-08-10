@@ -17,7 +17,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from app.agent import runtime
 from app.agent.orchestrator import build_orchestrator
-from app.agent.subagents.delivery import DeliveryMessage
+from app.agent.tools.deliver_reply import DeliveryMessage
 from app.api import chat as chat_api
 from app.kg.loader import build_digraph, load_kcs
 from app.main import app
@@ -74,9 +74,9 @@ class ScriptedLLM:
             return AIMessage(content="", tool_calls=[{"name": name, "args": {}, "id": call_id}])
 
         if last_tool is None:
-            return _call("assess_reply")
-        if last_tool == "assess_reply":
-            return _call("compose_delivery")
+            return _call("evaluate_response")
+        if last_tool == "evaluate_response":
+            return _call("deliver_reply")
         return AIMessage(content="done")
 
 
@@ -203,7 +203,7 @@ def test_new_session_streams_expected_events(graph_client: TestClient):
     assert session_payload["session_id"]
 
     reasoning_payload = json.loads(next(data for name, data in events if name == "reasoning"))
-    assert reasoning_payload["tool_call"] == "assess_reply"
+    assert reasoning_payload["tool_call"] == "evaluate_response"
 
 
 def test_session_open_streams_welcome_without_grading(graph_client: TestClient):

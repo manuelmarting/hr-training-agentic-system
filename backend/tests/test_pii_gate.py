@@ -1,6 +1,6 @@
 import pytest
 
-from app.memory.pii_gate import gate, pattern_check
+from app.agent.tools.extract_facts.pii_gate import gate, pattern_check
 from app.schemas.extraction import PersonalFact
 
 
@@ -33,7 +33,6 @@ def test_pattern_check_rejects_special_category_values(value):
         ("preferred_language", "es"),
         ("shift_pattern", "mornings only"),
         ("contact_time_preference", "after 6pm"),
-        ("channel_preference", "telegram"),
     ],
 )
 def test_pattern_check_allows_each_allowlisted_type(fact_type, value):

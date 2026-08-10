@@ -46,6 +46,9 @@ class StubLLM:
             return self.edges
         raise AssertionError(f"unexpected output_model {output_model}")
 
+    async def acall_with_tools(self, messages, tools):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
 
 def _ek(name: str, domain: str = "safety") -> ExtractedKC:
     return ExtractedKC(

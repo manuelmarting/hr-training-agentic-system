@@ -1,0 +1,22 @@
+# Conversation-quality eval cases: run a full real turn, then judge the rendered
+# reply on tone + whether it correctly reflects what actually happened this turn.
+
+- id: friendly_correct_praise
+  current_kc: SAF.001
+  question: "What PPE is required before manual handling?"
+  employee_text: "Safety boots, gloves, and a high-vis vest for that zone."
+
+- id: frustrated_employee_gets_supportive_tone
+  current_kc: SAF.001
+  question: "What PPE is required before manual handling?"
+  employee_text: "ugh I don't know, this is confusing, I never remember this stuff"
+
+- id: incorrect_answer_grounded_correction
+  current_kc: SAF.002
+  question: "How should you lift a heavy load safely?"
+  employee_text: "You should bend at the waist to pick it up faster."
+
+- id: off_topic_reply_redirected_politely
+  current_kc: SAF.001
+  question: "What PPE is required before manual handling?"
+  employee_text: "What time is lunch today?"

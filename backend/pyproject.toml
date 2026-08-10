@@ -24,3 +24,4 @@ extend-immutable-calls = [
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = ["eval: LLM-in-the-loop quality evals, real API calls, not run by default"]

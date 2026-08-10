@@ -3,7 +3,9 @@ import {
   streamChatReply,
   openSession,
   getKg,
+  getKgForEmployee,
   getSessionFacts,
+  getEmployeeFacts,
   type ChatMessage,
   type Citation,
   type KCInfo,
@@ -62,6 +64,15 @@ export default function ChatPage() {
     setFacts(sessionFacts);
   }
 
+  // Facts/mastery are keyed by employee, not session -- load them straight from
+  // the learner model as soon as the employee id is known, instead of waiting for
+  // a session to open and its welcome turn to finish streaming.
+  async function loadPanelsForEmployee(id: string) {
+    const [kg, employeeFacts] = await Promise.all([getKgForEmployee(id), getEmployeeFacts(id)]);
+    setKcs(kg);
+    setFacts(employeeFacts);
+  }
+
   // The "audio" SSE event arrives after all of the turn's "token" chunks (the
   // backend synthesizes speech from the fully-finalized reply text), so by the
   // time this fires the message is already on screen -- just play it.
@@ -97,6 +108,12 @@ export default function ChatPage() {
       return updated;
     });
   }
+
+  useEffect(() => {
+    if (!employeeId) return;
+    void loadPanelsForEmployee(employeeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employeeId]);
 
   useEffect(() => {
     if (!employeeId || openedSessionRef.current) return;
@@ -151,7 +168,7 @@ export default function ChatPage() {
       },
     }, employeeId)
       .then(() => {
-        // The welcome turn never calls assess_reply/extract_personal_fact (there's
+        // The welcome turn never calls evaluate_response/extract_facts (there's
         // nothing to grade yet), so onMastery/onMemoryEvent never fire for it --
         // without this, the panels would stay empty until the employee's first
         // real answer even though their prior mastery/facts are already loaded

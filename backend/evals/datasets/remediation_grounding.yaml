@@ -1,0 +1,32 @@
+# Faithfulness eval for the remediation path: fetch_remediation_from_grade() -> real
+# SOP retrieval -> deliver_reply() (real paraphrasing LLM call). Checks the composed
+# reply's claims are entailed by the retrieved excerpt, and that abstain cases never
+# fabricate a citation. kc_id/question/reason feed the query the same way the
+# orchestrator's `fetch_remediation` tool does.
+
+grounded_cases:
+  - id: ppe_donning_order
+    kc_id: SAF.001
+    question: "What PPE is required before manual handling?"
+    reason: "employee said gloves aren't needed for that zone"
+
+  - id: manual_handling_technique
+    kc_id: SAF.002
+    question: "How should you lift a heavy load safely?"
+    reason: "employee said to bend at the waist to lift"
+
+abstain_cases:
+  # Verified against the real index to score well below DEFAULT_THRESHOLD (6.0) —
+  # earlier drafts used reason text like "outside the SOP corpus", which leaked
+  # corpus jargon ("sop") into the BM25 query and spuriously inflated the score.
+  # Keep new abstain cases' question/reason free of warehouse/SOP vocabulary, and
+  # check the actual score with `Index(...).search(query, top_k=1)` before adding one.
+  - id: unrelated_small_talk
+    kc_id: SAF.001
+    question: "Who won the football match last night?"
+    reason: "completely unrelated small talk"
+
+  - id: unrelated_facilities_question
+    kc_id: SAF.001
+    question: "What is the wifi password for the break room?"
+    reason: "unrelated facilities question"

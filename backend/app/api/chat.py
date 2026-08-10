@@ -59,13 +59,17 @@ class KCInfo(BaseModel):
 
 
 @router.get("/kg", response_model=list[KCInfo])
-async def get_kg(session_id: str | None = None) -> list[KCInfo]:
+async def get_kg(session_id: str | None = None, employee_id: str | None = None) -> list[KCInfo]:
     """KC metadata + gating state for the mastery panel. `session_id` scopes gating
-    to that session's mastery; omit it to see the graph fully locked (mastery={})."""
+    to that session's mastery; `employee_id` reads mastery straight from the learner
+    model instead, for use before any session/checkpoint exists (page load). Omit
+    both to see the graph fully locked (mastery={})."""
     kg_graph = runtime.get_kg_graph()
     mastery: dict[str, float] = {}
     if session_id:
         mastery = await _session_mastery(session_id)
+    elif employee_id:
+        mastery = runtime.get_repo().get_mastery(employee_id)
 
     threshold = settings.mastery_threshold
     unlocked = unlocked_kcs(kg_graph, mastery, threshold)
@@ -96,6 +100,20 @@ async def get_session_facts(session_id: str) -> list[dict]:
     employee_id = await _session_employee_id(session_id)
     repo = runtime.get_repo()
     return [stored.model_dump() for stored in repo.list_facts(employee_id)]
+
+
+@router.get("/employee/{employee_id}/facts")
+async def get_employee_facts(employee_id: str) -> list[dict]:
+    """Facts and mastery are keyed by employee, not session (plan §5) — the panels
+    read this on page load, before any session/checkpoint exists, so returning
+    employees see their history immediately instead of after the welcome turn."""
+    repo = runtime.get_repo()
+    return [stored.model_dump() for stored in repo.list_facts(employee_id)]
+
+
+@router.get("/employee/{employee_id}/mastery")
+async def get_employee_mastery(employee_id: str) -> dict[str, float]:
+    return runtime.get_repo().get_mastery(employee_id)
 
 
 @router.delete("/facts/{fact_id}")
@@ -147,7 +165,6 @@ async def _graph_stream(request: ChatRequest, compiled_graph) -> AsyncIterator[d
         payload = {
             "session_id": session_id,
             "employee_id": request.employee_id,
-            "channel": request.channel,
             "language": request.language,
             "messages": [],
             "current_kc": current_kc,
@@ -205,7 +222,7 @@ def _events_for_step(node_name: str, update: dict | None) -> Iterator[dict]:
         if update.get("last_evaluation"):
             yield {
                 "event": "reasoning",
-                "data": json.dumps({"tool_call": "assess_reply", **update["last_evaluation"]}),
+                "data": json.dumps({"tool_call": "evaluate_response", **update["last_evaluation"]}),
             }
         if update.get("mastery"):
             yield {"event": "mastery_update", "data": json.dumps(update["mastery"])}

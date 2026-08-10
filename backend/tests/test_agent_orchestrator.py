@@ -2,8 +2,8 @@
 
 `ScriptedOrchestratorLLM` below stands in for a real model's tool-selection
 decisions with a small deterministic state machine that mirrors
-`ORCHESTRATOR_SYSTEM_PROMPT`'s policy (assess -> remediate-if-wrong -> compose, or
-assess -> end on opt-out). `assess_reply` folds what used to be three separate tools
+`ORCHESTRATOR_SYSTEM_PROMPT`'s policy (evaluate -> remediate-if-wrong -> deliver, or
+evaluate -> end on opt-out). `evaluate_response` folds what used to be three separate tools
 (grade/update-mastery/select-next-kc) into one call, so there's no longer an
 intermediate "did it update mastery" state to script around. That's intentional and a
 real limitation of these tests: they exercise the tool-dispatch plumbing and prove
@@ -27,7 +27,7 @@ from app.agent.orchestrator import (
     build_orchestrator,
     close_session,
 )
-from app.agent.subagents.delivery import ABSTAIN_TEXT, DeliveryMessage
+from app.agent.tools.deliver_reply import ABSTAIN_TEXT, DeliveryMessage
 from app.kg.loader import (
     DEFAULT_MASTERY_THRESHOLD,
     KnowledgeComponent,
@@ -153,8 +153,8 @@ SOPS_DIR = Path(__file__).parent.parent.parent / "docs" / "sops"
 
 
 class ScriptedOrchestratorLLM:
-    """Implements both `StructuredLLM` (grading/memory/delivery extraction) and
-    `ToolCallingLLM` (the orchestrator's own tool-selection loop)."""
+    """Implements `StructuredLLM`: grading/memory/delivery extraction plus the
+    orchestrator's own tool-selection loop."""
 
     def __init__(self, classifications: list[str], kc_id: str = "SAF.001") -> None:
         self._classifications = list(classifications)
@@ -198,23 +198,23 @@ class ScriptedOrchestratorLLM:
             return AIMessage(content="", tool_calls=[call])
 
         if last_tool is None:
-            return _call("assess_reply")
+            return _call("evaluate_response")
 
-        if last_tool == "assess_reply":
+        if last_tool == "evaluate_response":
             last_result = tool_results[-1]
             if "opt_out=True" in last_result:
                 return _call("end_session")
             if "classification=off_topic" in last_result:
-                return _call("compose_delivery")
+                return _call("deliver_reply")
             classification = self._classifications[self.grade_calls - 1]
             if classification in ("incorrect", "partial"):
-                return _call("remediate", {"reason": "misconception"})
-            return _call("compose_delivery")
+                return _call("fetch_remediation", {"reason": "misconception"})
+            return _call("deliver_reply")
 
-        if last_tool == "remediate":
-            return _call("compose_delivery")
+        if last_tool == "fetch_remediation":
+            return _call("deliver_reply")
 
-        if last_tool in ("compose_delivery", "end_session"):
+        if last_tool in ("deliver_reply", "end_session"):
             return AIMessage(content="done")
 
         raise AssertionError(f"unscripted state after tool {last_tool!r}")
@@ -236,7 +236,6 @@ def _initial_state(session_id: str, employee_id: str = "emp-1") -> dict:
     return {
         "session_id": session_id,
         "employee_id": employee_id,
-        "channel": "telegram",
         "language": "en",
         "messages": [],
         "current_kc": "SAF.001",
@@ -410,11 +409,11 @@ def test_close_session_emits_summary_with_deltas_and_risks():
     assert archived == summary
 
 
-# --- compose_delivery is terminal -----------------------------------------------
+# --- deliver_reply is terminal -----------------------------------------------
 
 
 class _RepeatingComposeLLM:
-    """Always tries to call `compose_delivery` again, no matter what — simulates a
+    """Always tries to call `deliver_reply` again, no matter what — simulates a
     model that never decides it's "done" on its own. Proves `route_after_tools` cuts
     the turn off after the first call rather than relying on the model to stop."""
 
@@ -447,15 +446,15 @@ class _RepeatingComposeLLM:
         call_id = f"call-{len(ai_tool_calls)}"
         if last_tool is None:
             return AIMessage(
-                content="", tool_calls=[{"name": "assess_reply", "args": {}, "id": call_id}]
+                content="", tool_calls=[{"name": "evaluate_response", "args": {}, "id": call_id}]
             )
-        # Always tries compose_delivery again, whether it's the first attempt or not.
+        # Always tries deliver_reply again, whether it's the first attempt or not.
         return AIMessage(
-            content="", tool_calls=[{"name": "compose_delivery", "args": {}, "id": call_id}]
+            content="", tool_calls=[{"name": "deliver_reply", "args": {}, "id": call_id}]
         )
 
 
-async def test_compose_delivery_is_terminal_even_if_model_calls_it_again(kg_graph, rag_index):
+async def test_deliver_reply_is_terminal_even_if_model_calls_it_again(kg_graph, rag_index):
     repo = Repo(":memory:")
     llm = _RepeatingComposeLLM()
     graph = build_orchestrator(llm=llm, index=rag_index, repo=repo, kg_graph=kg_graph)
@@ -463,18 +462,18 @@ async def test_compose_delivery_is_terminal_even_if_model_calls_it_again(kg_grap
 
     result = await _run_turn(graph, config, "gloves", initial=_initial_state("sess-repeat-compose"))
 
-    # Only the first compose_delivery call's text made it through, even though the
+    # Only the first deliver_reply call's text made it through, even though the
     # (misbehaving) model kept trying to call it again.
     assert llm.compose_calls == 1
     assert result["messages"][-1]["content"] == "draft #1"
 
 
-# --- conversation history reaches compose_delivery ------------------------------
+# --- conversation history reaches deliver_reply ------------------------------
 
 
 class _TranscriptCapturingLLM:
     """Grades every reply as correct and always composes directly, capturing every
-    `compose_delivery` user prompt so a test can assert whether a prior turn's own
+    `deliver_reply` user prompt so a test can assert whether a prior turn's own
     reply shows up in a later turn's `<conversation_so_far>` block."""
 
     def __init__(self) -> None:
@@ -504,16 +503,16 @@ class _TranscriptCapturingLLM:
         ]
         if not ai_tool_calls:
             return AIMessage(
-                content="", tool_calls=[{"name": "assess_reply", "args": {}, "id": "c0"}]
+                content="", tool_calls=[{"name": "evaluate_response", "args": {}, "id": "c0"}]
             )
-        if ai_tool_calls[-1] == "assess_reply":
+        if ai_tool_calls[-1] == "evaluate_response":
             return AIMessage(
-                content="", tool_calls=[{"name": "compose_delivery", "args": {}, "id": "c1"}]
+                content="", tool_calls=[{"name": "deliver_reply", "args": {}, "id": "c1"}]
             )
         return AIMessage(content="done")
 
 
-async def test_compose_delivery_sees_prior_turns_but_not_the_first(kg_graph, rag_index):
+async def test_deliver_reply_sees_prior_turns_but_not_the_first(kg_graph, rag_index):
     repo = Repo(":memory:")
     llm = _TranscriptCapturingLLM()
     graph = build_orchestrator(
@@ -526,7 +525,7 @@ async def test_compose_delivery_sees_prior_turns_but_not_the_first(kg_graph, rag
 
     assert len(llm.delivery_prompts) == 2
     # First turn: this turn's own employee message is visible (added before
-    # compose_delivery runs), but there's no prior Sofía reply to echo back yet.
+    # deliver_reply runs), but there's no prior Sofía reply to echo back yet.
     assert "first answer" in llm.delivery_prompts[0]
     assert "reply #1" not in llm.delivery_prompts[0]
     # Second turn: sees both the employee's first answer and Sofía's own first reply.
@@ -598,12 +597,12 @@ class _ClosingCapturingLLM:
         ]
         if not ai_tool_calls:
             return AIMessage(
-                content="", tool_calls=[{"name": "assess_reply", "args": {}, "id": "c0"}]
+                content="", tool_calls=[{"name": "evaluate_response", "args": {}, "id": "c0"}]
             )
-        if ai_tool_calls[-1] == "assess_reply":
+        if ai_tool_calls[-1] == "evaluate_response":
             return AIMessage(
                 content="",
-                tool_calls=[{"name": "compose_delivery", "args": {"closing": True}, "id": "c1"}],
+                tool_calls=[{"name": "deliver_reply", "args": {"closing": True}, "id": "c1"}],
             )
         return AIMessage(content="done")
 
@@ -630,7 +629,7 @@ async def test_closing_wrap_up_skips_next_question_and_includes_results(kg_graph
 
 class _SessionOpenLLM:
     """Always composes a welcome directly — the policy `ORCHESTRATOR_SYSTEM_PROMPT`
-    asks for when `is_session_open` is set. Captures the `compose_delivery` user
+    asks for when `is_session_open` is set. Captures the `deliver_reply` user
     prompt so tests can assert `employee_profile` made it into context."""
 
     def __init__(self) -> None:
@@ -652,13 +651,13 @@ class _SessionOpenLLM:
         ]
         if not ai_tool_calls:
             return AIMessage(
-                content="", tool_calls=[{"name": "compose_delivery", "args": {}, "id": "call-0"}]
+                content="", tool_calls=[{"name": "deliver_reply", "args": {}, "id": "call-0"}]
             )
         return AIMessage(content="done")
 
 
 class _MisbehavingSessionOpenLLM:
-    """Calls `assess_reply` first despite `is_session_open` — tests the orchestrator's
+    """Calls `evaluate_response` first despite `is_session_open` — tests the orchestrator's
     guard, not a real model's behavior."""
 
     async def extract(self, output_model, system, user):
@@ -671,12 +670,12 @@ class _MisbehavingSessionOpenLLM:
         tool_results = [m.content for m in messages if isinstance(m, ToolMessage)]
         if not tool_results:
             return AIMessage(
-                content="", tool_calls=[{"name": "assess_reply", "args": {}, "id": "call-0"}]
+                content="", tool_calls=[{"name": "evaluate_response", "args": {}, "id": "call-0"}]
             )
         if len(tool_results) == 1:
             assert "session-open turn" in tool_results[-1]
             return AIMessage(
-                content="", tool_calls=[{"name": "compose_delivery", "args": {}, "id": "call-1"}]
+                content="", tool_calls=[{"name": "deliver_reply", "args": {}, "id": "call-1"}]
             )
         return AIMessage(content="done")
 
@@ -701,7 +700,7 @@ async def test_session_open_turn_composes_welcome_without_grading(kg_graph, rag_
     assert any("Sam" in prompt for prompt in llm.delivery_prompts)
 
 
-async def test_session_open_turn_rejects_assess_reply(kg_graph, rag_index):
+async def test_session_open_turn_rejects_evaluate_response(kg_graph, rag_index):
     repo = Repo(":memory:")
     llm = _MisbehavingSessionOpenLLM()
     graph = build_orchestrator(llm=llm, index=rag_index, repo=repo, kg_graph=kg_graph)

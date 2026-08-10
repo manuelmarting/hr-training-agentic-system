@@ -36,7 +36,7 @@ flowchart TD
     ENTRY --> AGENT[agent_node<br/>1 LLM call: tool_llm.acall_with_tools]
     AGENT -->|tool_calls present<br/>and under max_tool_iterations| TOOLS[tools_node]
     AGENT -->|no tool_calls, or<br/>iteration cap hit| FINALIZE[finalize_node]
-    TOOLS -->|compose_delivery fired<br/>this turn| FINALIZE
+    TOOLS -->|deliver_reply fired<br/>this turn| FINALIZE
     TOOLS -->|otherwise| AGENT
     FINALIZE --> END([END])
 
@@ -48,7 +48,7 @@ flowchart TD
 
 **Routing code** — `app/agent/orchestrator.py`:
 - `route_after_agent` (`orchestrator.py:185-197`) — `tools` while `AIMessage.tool_calls` is non-empty and under `max_tool_iterations` (default 6, a fail-closed safety net, not a policy); otherwise `finalize`.
-- `route_after_tools` (`orchestrator.py:199-216`) — a **hardcoded** rule, not a model decision: once `compose_delivery` has set `pending_delivery_text`, go straight to `finalize`. Added because nothing in the prompt reliably told a real model "you're done" — without it, the model would call `compose_delivery` again to revise its own wording until the iteration cap forced a stop.
+- `route_after_tools` (`orchestrator.py:199-216`) — a **hardcoded** rule, not a model decision: once `deliver_reply` has set `pending_delivery_text`, go straight to `finalize`. Added because nothing in the prompt reliably told a real model "you're done" — without it, the model would call `deliver_reply` again to revise its own wording until the iteration cap forced a stop.
 
 ## 3. Node-by-node: what runs, what's in the prompt, what's deterministic
 
@@ -72,10 +72,10 @@ Dispatches each requested tool call **by name**, using state (`current_kc`, `mas
 
 | Tool | Code invoked | LLM calls | What's deterministic |
 |---|---|---|---|
-| `assess_reply` | `evaluate_turn()` — `app/agent/nodes/evaluate.py:66-90` → `bkt.update()` — `app/mastery/bkt.py` → `unlocked_kcs()` — `app/kg/loader.py` | 1 (grading: classification/language/sentiment) | BKT posterior formula; KC unlock/gating; `opt_out` from keyword match (`_is_opt_out`, `evaluate.py:51-53`), not the LLM |
-| `remediate` | `run_remediation()` — `app/agent/subagents/remediation.py:16-23` → `remediate()` lookup — `app/agent/nodes/remediate.py` → `app/rag/retrieve.py` | 0 (retrieval only, unless remediate.py's own composition — see that module) | `RemediationReply` Pydantic validator rejects a non-abstaining reply without a citation — a type-level invariant |
-| `extract_personal_fact` | `extract_and_gate_fact()` — `app/agent/nodes/memory.py:95-107` → `pattern_check()` + `gate()` — `app/memory/pii_gate.py` | 2 (extraction, then special-category check) | Stage-1 pattern denylist short-circuits stage 2; any LLM error on stage 2 is treated as reject (fail-closed), never implicit pass |
-| `compose_delivery` | `compose_delivery()` subagent — `app/agent/subagents/delivery.py:188-240` | 1 (writes the reply text) | `citation` is always spliced from state (`Citation.model_validate(last_remediation["citation"])`), never trusted from the LLM's prose; `_groundedness_score()` flags (doesn't block) low-overlap paraphrasing for audit |
+| `evaluate_response` | `evaluate_turn()` — `app/agent/tools/evaluate_response/__init__.py` → `bkt.update()` — `app/mastery/bkt.py` → `unlocked_kcs()` — `app/kg/loader.py` | 1 (grading: classification/language/sentiment) | BKT posterior formula; KC unlock/gating; `opt_out` from keyword match, not the LLM |
+| `fetch_remediation` | `fetch_remediation_from_grade()` → `fetch_remediation()` lookup — both `app/agent/tools/fetch_remediation.py` → `app/rag/retrieve.py` | 0 (retrieval only, unless fetch_remediation.py's own composition — see that module) | `RemediationReply` Pydantic validator rejects a non-abstaining reply without a citation — a type-level invariant |
+| `extract_facts` | `extract_and_gate_fact()` — `app/agent/tools/extract_facts/__init__.py` → `pattern_check()` + `gate()` — `app/memory/pii_gate.py` | 2 (extraction, then special-category check) | Stage-1 pattern denylist short-circuits stage 2; any LLM error on stage 2 is treated as reject (fail-closed), never implicit pass |
+| `deliver_reply` | `deliver_reply()` — `app/agent/tools/deliver_reply/__init__.py` | 1 (writes the reply text) | `citation` is always spliced from state (`Citation.model_validate(last_remediation["citation"])`), never trusted from the LLM's prose; `_groundedness_score()` flags (doesn't block) low-overlap paraphrasing for audit |
 | `end_session` | inline in `tools_node` | 0 | sets `ended=True`, logs `session_stop` event |
 
 Every branch also calls `repo.append_event(session_id, turn_index, event_type, payload)` — `app/persistence/repo.py` — an append-only audit log independent of the LangGraph checkpointer.
@@ -124,7 +124,7 @@ classDiagram
 
 | Node | State key present | SSE event |
 |---|---|---|
-| `tools` | `last_evaluation` | `reasoning` (`tool_call: "assess_reply"`, classification, confidence, ...) |
+| `tools` | `last_evaluation` | `reasoning` (`tool_call: "evaluate_response"`, classification, confidence, ...) |
 | `tools` | `mastery` | `mastery_update` |
 | `tools` | `citations` | `citation` (per item) |
 | `tools` | `pending_facts` | `memory_event` (per item) |

@@ -4,7 +4,7 @@
 Pure-Python BM25 over `(doc_id, heading, text)` chunks — no embedding provider, no
 vector DB, appropriate for 8 short documents (plan §1: "the threshold-based abstain
 is what's being tested, not recall@k"). Below `threshold`, `retrieve()` returns
-`Abstain` rather than guessing; `app/agent/nodes/remediate.py` is the only caller
+`Abstain` rather than guessing; `app/agent/tools/fetch_remediation.py` is the only caller
 allowed to turn a `Grounded` result into a reply, and it always carries the
 `Citation` this module attaches.
 """

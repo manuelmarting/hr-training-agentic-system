@@ -33,19 +33,11 @@ def _log_result(output_model: type[BaseModel], user: str, result: BaseModel) -> 
 
 @runtime_checkable
 class StructuredLLM(Protocol):
-    """A structured-extraction boundary. Implementations validate against `output_model`."""
+    """The orchestrator's LLM boundary: structured extraction plus tool-selection calls."""
 
     async def extract(self, output_model: type[T], system: str, user: str) -> T:
         """Return a validated `output_model` instance, or raise `StructuredLLMError`."""
         ...
-
-
-@runtime_checkable
-class ToolCallingLLM(Protocol):
-    """The orchestrator's tool-selection boundary — separate from `StructuredLLM`
-    (which callers like `evaluate_turn`/`extract_and_gate_fact` depend on structurally
-    via `isinstance` checks in tests) so adding this method never breaks those.
-    """
 
     async def acall_with_tools(self, messages: list, tools: list) -> object:
         """Return the model's next message (an `AIMessage`, possibly carrying
@@ -53,45 +45,27 @@ class ToolCallingLLM(Protocol):
         ...
 
 
-class AnthropicLLM:
-    """`StructuredLLM` backed by `langchain-anthropic` `.with_structured_output` (CLAUDE.md).
+class _ProviderLLM:
+    """Shared `StructuredLLM` implementation: repair-once-then-raise (CLAUDE.md).
 
-    On the first invalid response (schema/parse failure) it re-prompts once, appending the
-    validation error, then raises `StructuredLLMError`. Transport errors are wrapped the same
-    way so callers only ever handle one exception type.
+    Subclasses build `self._chat` in `__init__` and set `self._validation_errors` to
+    the provider-specific exception type(s) that mean "invalid output" — checked
+    alongside `pydantic.ValidationError`, which every provider can raise.
     """
 
-    def __init__(
-        self,
-        model: str | None = None,
-        *,
-        api_key: str | None = None,
-        max_tokens: int | None = None,
-    ) -> None:
-        # Lazy import: keeps this dependency out of the unit-test path.
-        from langchain_anthropic import ChatAnthropic
-
-        from app.config import settings
-
-        key = api_key or settings.anthropic_api_key
-        if not key:
-            raise StructuredLLMError("no Anthropic API key configured (settings.anthropic_api_key)")
-        self._chat = ChatAnthropic(
-            model=model or settings.extraction_model,
-            api_key=key,
-            max_tokens=max_tokens or settings.extraction_max_tokens,
-        )
+    _chat: object
+    _validation_errors: tuple[type[Exception], ...] = ()
 
     async def extract(self, output_model: type[T], system: str, user: str) -> T:
-        from langchain_core.exceptions import OutputParserException
         from pydantic import ValidationError
 
+        invalid_output = (ValidationError, *self._validation_errors)
         structured = self._chat.with_structured_output(output_model)
         try:
             result = await structured.ainvoke([("system", system), ("user", user)])
             _log_result(output_model, user, result)
             return result
-        except (OutputParserException, ValidationError) as first_error:
+        except invalid_output as first_error:
             logger.warning("structured extraction invalid, attempting repair: %s", first_error)
             repair_user = (
                 f"{user}\n\n"
@@ -103,7 +77,7 @@ class AnthropicLLM:
                 result = await structured.ainvoke([("system", system), ("user", repair_user)])
                 _log_result(output_model, repair_user, result)
                 return result
-            except (OutputParserException, ValidationError) as second_error:
+            except invalid_output as second_error:
                 raise StructuredLLMError(str(second_error)) from second_error
         except Exception as transport_error:  # noqa: BLE001 - boundary: wrap into one domain error
             raise StructuredLLMError(str(transport_error)) from transport_error
@@ -112,11 +86,37 @@ class AnthropicLLM:
         return await self._chat.bind_tools(tools).ainvoke(messages)
 
 
-class GeminiLLM:
-    """`StructuredLLM` backed by `langchain-google-genai` `.with_structured_output`.
+class AnthropicLLM(_ProviderLLM):
+    """`StructuredLLM` backed by `langchain-anthropic`. Defaults to `settings.extraction_model`."""
 
-    Same repair-once-then-raise contract as `AnthropicLLM`; see that class for
-    the rationale. Defaults to `settings.gemini_extraction_model`.
+    def __init__(
+        self,
+        model: str | None = None,
+        *,
+        api_key: str | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
+        # Lazy import: keeps this dependency out of the unit-test path.
+        from langchain_anthropic import ChatAnthropic
+        from langchain_core.exceptions import OutputParserException
+
+        from app.config import settings
+
+        key = api_key or settings.anthropic_api_key
+        if not key:
+            raise StructuredLLMError("no Anthropic API key configured (settings.anthropic_api_key)")
+        self._chat = ChatAnthropic(
+            model=model or settings.extraction_model,
+            api_key=key,
+            max_tokens=max_tokens or settings.extraction_max_tokens,
+        )
+        self._validation_errors = (OutputParserException,)
+
+
+class GeminiLLM(_ProviderLLM):
+    """`StructuredLLM` backed by `langchain-google-genai`.
+
+    Defaults to `settings.gemini_extraction_model`.
     """
 
     def __init__(
@@ -127,6 +127,7 @@ class GeminiLLM:
         max_tokens: int | None = None,
     ) -> None:
         # Lazy import: keeps this dependency out of the unit-test path.
+        from google.api_core.exceptions import GoogleAPIError
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         from app.config import settings
@@ -139,42 +140,13 @@ class GeminiLLM:
             google_api_key=key,
             max_tokens=max_tokens or settings.extraction_max_tokens,
         )
-
-    async def extract(self, output_model: type[T], system: str, user: str) -> T:
-        from google.api_core.exceptions import GoogleAPIError
-        from pydantic import ValidationError
-
-        structured = self._chat.with_structured_output(output_model)
-        try:
-            result = await structured.ainvoke([("system", system), ("user", user)])
-            _log_result(output_model, user, result)
-            return result
-        except (ValidationError, GoogleAPIError) as first_error:
-            logger.warning("structured extraction invalid, attempting repair: %s", first_error)
-            repair_user = (
-                f"{user}\n\n"
-                "Your previous response did not match the required schema. "
-                f"Error:\n{first_error}\n"
-                "Return a corrected response that strictly matches the schema."
-            )
-            try:
-                result = await structured.ainvoke([("system", system), ("user", repair_user)])
-                _log_result(output_model, repair_user, result)
-                return result
-            except (ValidationError, GoogleAPIError) as second_error:
-                raise StructuredLLMError(str(second_error)) from second_error
-        except Exception as transport_error:  # noqa: BLE001 - boundary: wrap into one domain error
-            raise StructuredLLMError(str(transport_error)) from transport_error
-
-    async def acall_with_tools(self, messages: list, tools: list) -> object:
-        return await self._chat.bind_tools(tools).ainvoke(messages)
+        self._validation_errors = (GoogleAPIError,)
 
 
-class OpenAILLM:
-    """`StructuredLLM` backed by `langchain-openai` `.with_structured_output`.
+class OpenAILLM(_ProviderLLM):
+    """`StructuredLLM` backed by `langchain-openai`.
 
-    Same repair-once-then-raise contract as `AnthropicLLM`; see that class for
-    the rationale. Defaults to `settings.openai_extraction_model`.
+    Defaults to `settings.openai_extraction_model`.
     """
 
     def __init__(
@@ -186,6 +158,7 @@ class OpenAILLM:
     ) -> None:
         # Lazy import: keeps this dependency out of the unit-test path.
         from langchain_openai import ChatOpenAI
+        from openai import OpenAIError
 
         from app.config import settings
 
@@ -197,35 +170,7 @@ class OpenAILLM:
             api_key=key,
             max_tokens=max_tokens or settings.extraction_max_tokens,
         )
-
-    async def extract(self, output_model: type[T], system: str, user: str) -> T:
-        from openai import OpenAIError
-        from pydantic import ValidationError
-
-        structured = self._chat.with_structured_output(output_model)
-        try:
-            result = await structured.ainvoke([("system", system), ("user", user)])
-            _log_result(output_model, user, result)
-            return result
-        except (ValidationError, OpenAIError) as first_error:
-            logger.warning("structured extraction invalid, attempting repair: %s", first_error)
-            repair_user = (
-                f"{user}\n\n"
-                "Your previous response did not match the required schema. "
-                f"Error:\n{first_error}\n"
-                "Return a corrected response that strictly matches the schema."
-            )
-            try:
-                result = await structured.ainvoke([("system", system), ("user", repair_user)])
-                _log_result(output_model, repair_user, result)
-                return result
-            except (ValidationError, OpenAIError) as second_error:
-                raise StructuredLLMError(str(second_error)) from second_error
-        except Exception as transport_error:  # noqa: BLE001 - boundary: wrap into one domain error
-            raise StructuredLLMError(str(transport_error)) from transport_error
-
-    async def acall_with_tools(self, messages: list, tools: list) -> object:
-        return await self._chat.bind_tools(tools).ainvoke(messages)
+        self._validation_errors = (OpenAIError,)
 
 
 def get_structured_llm(

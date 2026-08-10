@@ -232,3 +232,6 @@ backend/app/static/*
 # Environment files
 .env
 !.env.example
+
+# Local-only docs (not part of the repo)
+docs/DEMO_SCRIPT.md

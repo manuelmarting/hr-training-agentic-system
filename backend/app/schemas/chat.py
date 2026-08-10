@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.agent.state import Channel, Language
+from app.agent.state import Language
 
 
 class ChatMessage(BaseModel):
@@ -16,7 +16,6 @@ class ChatRequest(BaseModel):
     # `session_id` on every turn after (mirrors `agent/orchestrator.py`'s thread_id contract).
     session_id: str | None = None
     employee_id: str = "demo-employee"
-    channel: Channel = "telegram"
     language: Language = "en"
     # True for the one request that opens a brand-new session (empty `messages`) so
     # Sofía speaks first instead of waiting on the employee. Ignored by `/api/chat` on

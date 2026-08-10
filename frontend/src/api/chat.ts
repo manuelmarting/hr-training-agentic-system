@@ -165,6 +165,14 @@ export async function getKg(sessionId: string): Promise<KCInfo[]> {
   return res.json();
 }
 
+/** Reads mastery straight from the learner model by employee, not session --
+ * for populating the panel on page load, before any session/checkpoint exists. */
+export async function getKgForEmployee(employeeId: string): Promise<KCInfo[]> {
+  const res = await fetch(`/api/kg?employee_id=${encodeURIComponent(employeeId)}`);
+  if (!res.ok) throw new Error(`GET /api/kg failed: ${res.status}`);
+  return res.json();
+}
+
 export type StoredFact = {
   id: number;
   employee_id: string;
@@ -175,6 +183,14 @@ export type StoredFact = {
 export async function getSessionFacts(sessionId: string): Promise<StoredFact[]> {
   const res = await fetch(`/api/session/${encodeURIComponent(sessionId)}/facts`);
   if (!res.ok) throw new Error(`GET /api/session/${sessionId}/facts failed: ${res.status}`);
+  return res.json();
+}
+
+/** For populating the memory log on page load, before any session/checkpoint
+ * exists -- facts are keyed by employee, not session. */
+export async function getEmployeeFacts(employeeId: string): Promise<StoredFact[]> {
+  const res = await fetch(`/api/employee/${encodeURIComponent(employeeId)}/facts`);
+  if (!res.ok) throw new Error(`GET /api/employee/${employeeId}/facts failed: ${res.status}`);
   return res.json();
 }
 
