@@ -266,7 +266,7 @@ def test_session_id_is_stable_across_turns(graph_client: TestClient):
 def test_turn_streams_audio_event_when_voice_service_available(
     graph_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ):
-    async def _fake_synthesize(text: str) -> bytes:
+    async def _fake_synthesize(text: str, language: str = "en") -> bytes:
         assert text  # the finalized reply text, not empty
         return _FAKE_AUDIO
 
@@ -284,7 +284,7 @@ def test_turn_streams_audio_event_when_voice_service_available(
 def test_turn_completes_without_audio_event_when_voice_service_unavailable(
     graph_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ):
-    async def _unavailable_synthesize(text: str) -> None:
+    async def _unavailable_synthesize(text: str, language: str = "en") -> None:
         return None
 
     monkeypatch.setattr(chat_api, "synthesize", _unavailable_synthesize)

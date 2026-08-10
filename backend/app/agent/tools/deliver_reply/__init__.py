@@ -111,6 +111,7 @@ def _build_user_prompt(
     *,
     language: str,
     sentiment: str,
+    classification: str | None,
     next_kc_description: str | None,
     excerpt: str | None,
     citation: Citation | None,
@@ -123,6 +124,15 @@ def _build_user_prompt(
         f"Employee language: {language}",
         f"Employee sentiment: {sentiment}",
     ]
+    if classification is not None:
+        parts.append(
+            "<turn_evaluation>\n"
+            f"The employee's last answer was graded: {classification}.\n"
+            "</turn_evaluation>\n\n"
+            "This grading is already final and computed independently of you — your "
+            "wording must agree with it (e.g. never call a graded-incorrect or "
+            "graded-partial answer exactly right, and vice versa)."
+        )
     if conversation_history is not None:
         parts.append(
             "<conversation_so_far>\n"
@@ -171,6 +181,7 @@ async def deliver_reply(
     language: str,
     sentiment: str,
     fallback_text: str,
+    classification: str | None = None,
     next_kc_description: str | None = None,
     excerpt: str | None = None,
     citation: Citation | None = None,
@@ -185,6 +196,7 @@ async def deliver_reply(
     user_prompt = _build_user_prompt(
         language=language,
         sentiment=sentiment,
+        classification=classification,
         next_kc_description=next_kc_description,
         excerpt=excerpt,
         citation=citation,

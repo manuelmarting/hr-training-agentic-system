@@ -385,9 +385,7 @@ def build_orchestrator(
             return f"grounded citation={reply.citation.doc_id} heading={reply.citation.heading}"
         return "abstained"
 
-    async def _handle_extract_facts(
-        state: SessionState, args: dict, ctx: _ToolCallContext
-    ) -> str:
+    async def _handle_extract_facts(state: SessionState, args: dict, ctx: _ToolCallContext) -> str:
         fact, gate_result = await extract_and_gate_fact(llm, employee_text=state["employee_text"])
         if fact is None:
             return "no fact found"
@@ -411,9 +409,7 @@ def build_orchestrator(
         )
         return f"fact_type={fact.fact_type} allowed={allowed}"
 
-    async def _handle_deliver_reply(
-        state: SessionState, args: dict, ctx: _ToolCallContext
-    ) -> str:
+    async def _handle_deliver_reply(state: SessionState, args: dict, ctx: _ToolCallContext) -> str:
         closing = bool(args.get("closing"))
         kc = kg_graph.nodes[ctx.current_kc]["kc"]
         evaluation_dict = ctx.last_evaluation or {}
@@ -430,6 +426,7 @@ def build_orchestrator(
             llm,
             language=evaluation_dict.get("language", state.get("language", "en")),
             sentiment=evaluation_dict.get("sentiment", "neutral"),
+            classification=evaluation_dict.get("classification"),
             next_kc_description=delivery_inputs.next_kc_description,
             excerpt=delivery_inputs.excerpt,
             citation=delivery_inputs.citation,

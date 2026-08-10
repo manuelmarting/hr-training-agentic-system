@@ -201,7 +201,9 @@ async def _graph_stream(request: ChatRequest, compiled_graph) -> AsyncIterator[d
         finalized_text = ""
 
     if finalized_text:
-        audio_bytes = await synthesize(finalized_text)
+        snapshot = await compiled_graph.aget_state(config)
+        language = snapshot.values.get("language", "en")
+        audio_bytes = await synthesize(finalized_text, language)
         if audio_bytes:
             yield {
                 "event": "audio",

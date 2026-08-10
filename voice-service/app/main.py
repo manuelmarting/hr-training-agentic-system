@@ -17,23 +17,39 @@ from typing import Literal
 import numpy as np
 import soundfile as sf
 from fastapi import FastAPI, HTTPException, Response
-from kokoro import KPipeline
+from kokoro import KModel, KPipeline
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 24000
 
-_pipeline: KPipeline | None = None
+# One KPipeline per supported language, sharing a single KModel (kokoro's own
+# recommendation — see KPipeline's docstring). Kokoro's G2P is language-aware, so a
+# pipeline built for lang_code="a" (English) mispronounces Spanish text; each
+# language needs its own pipeline plus a matching default voice.
+_PIPELINE_CONFIG: dict[str, dict[str, str]] = {
+    "en": {"lang_code": "a", "default_voice": "af_heart"},
+    "es": {"lang_code": "e", "default_voice": "ef_dora"},
+}
+_pipelines: dict[str, KPipeline] = {}
 _state: Literal["initializing", "ready", "error"] = "initializing"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _pipeline, _state
+    global _state
     try:
         loop = asyncio.get_event_loop()
-        _pipeline = await loop.run_in_executor(None, lambda: KPipeline(lang_code="a"))
+
+        def _build_pipelines() -> dict[str, KPipeline]:
+            model = KModel()
+            return {
+                language: KPipeline(lang_code=cfg["lang_code"], model=model)
+                for language, cfg in _PIPELINE_CONFIG.items()
+            }
+
+        _pipelines.update(await loop.run_in_executor(None, _build_pipelines))
         _state = "ready"
     except Exception:
         _state = "error"
@@ -51,18 +67,19 @@ async def health() -> dict[str, str]:
 
 class SynthesizeRequest(BaseModel):
     text: str
-    voice: str = "af_heart"
+    language: Literal["en", "es"] = "en"
+    voice: str | None = None
 
 
 @app.post("/synthesize")
 async def synthesize(request: SynthesizeRequest) -> Response:
-    if _pipeline is None:
+    pipeline = _pipelines.get(request.language)
+    if pipeline is None:
         raise HTTPException(status_code=503, detail="model not ready")
 
+    voice = request.voice or _PIPELINE_CONFIG[request.language]["default_voice"]
     loop = asyncio.get_event_loop()
-    audio_bytes = await loop.run_in_executor(
-        None, lambda: _generate(_pipeline, request.text, request.voice)
-    )
+    audio_bytes = await loop.run_in_executor(None, lambda: _generate(pipeline, request.text, voice))
     return Response(content=audio_bytes, media_type="audio/wav")
 
 
