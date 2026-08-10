@@ -30,6 +30,14 @@ export type MemoryFact = {
   confidence: number;
 };
 
+/** One step of the orchestrator's per-turn agent trace, in call order: either a
+ * tool call (name/args/result) or free-text reasoning the model produced alongside
+ * one. Every tool the ReAct loop can call shows up here, not just
+ * `evaluate_response` (that one also gets its own structured `ReasoningTrace`). */
+export type TraceStep =
+  | { type: "thought"; content: string }
+  | { type: "tool_call"; tool: string; args: Record<string, unknown>; result: string };
+
 export type ChatStreamHandlers = {
   onChunk: (text: string) => void;
   /** Fired once per turn with the session/thread id — echo it back on the next
@@ -37,6 +45,7 @@ export type ChatStreamHandlers = {
    * starting a fresh one every turn. */
   onSession?: (sessionId: string) => void;
   onReasoning?: (trace: ReasoningTrace) => void;
+  onTraceStep?: (step: TraceStep) => void;
   onMastery?: (update: MasteryUpdate) => void;
   onCitation?: (citation: Citation) => void;
   onMemoryEvent?: (fact: MemoryFact) => void;
@@ -52,8 +61,8 @@ export type ChatStreamHandlers = {
  * Streams a chat reply via SSE. Uses fetch (not EventSource) because the
  * request needs a JSON body; parses the "event: ...\ndata: ...\n\n" frames
  * emitted by sse-starlette on the backend. Event names match the backend's
- * vocabulary (plan §5): "session", "token", "reasoning", "mastery_update",
- * "citation", "memory_event", "audio", "session_stop", "done".
+ * vocabulary (plan §5): "session", "token", "reasoning", "trace_step",
+ * "mastery_update", "citation", "memory_event", "audio", "session_stop", "done".
  */
 export async function streamChatReply(
   messages: ChatMessage[],
@@ -116,6 +125,9 @@ export async function streamChatReply(
           break;
         case "reasoning":
           handlers.onReasoning?.(JSON.parse(data));
+          break;
+        case "trace_step":
+          handlers.onTraceStep?.(JSON.parse(data));
           break;
         case "mastery_update":
           handlers.onMastery?.(JSON.parse(data));

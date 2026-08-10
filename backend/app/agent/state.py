@@ -51,6 +51,13 @@ class SessionState(TypedDict, total=False):
     pending_delivery_text: str | None
     pending_options: list[str]
     pending_requires_confirmation: bool
+    # Every tool call (and any free-text "thought" alongside one) made so far this
+    # turn, in call order — `{"type": "tool_call", "tool": ..., "args": ...,
+    # "result": ...}` or `{"type": "thought", "content": ...}`. Accumulated across
+    # the agent/tools loop's iterations (last-write-wins, so each write carries the
+    # full list so far); streamed to the frontend as `trace_step` SSE events
+    # (`app/api/chat.py`) for the full-trace panel, not just `evaluate_response`.
+    tool_trace: list[dict]
 
     # The current turn's tool-calling transcript (LangChain messages). Reset by
     # `agent_entry`; never read by anything outside the orchestrator graph.

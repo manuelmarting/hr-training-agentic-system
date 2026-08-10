@@ -32,11 +32,11 @@ flowchart TB
 
         subgraph RuntimePath["Runtime path — one graph turn per request"]
             ChatAPI["api/chat.py\nPOST /api/chat (SSE)\nGET /api/kg, /session/{id}/mastery, /facts"]
-            Orchestrator["orchestrator.py\nLangGraph StateGraph\nthread_id = session_id"]
+            Orchestrator["agent/orchestrator/\nLangGraph StateGraph\nthread_id = session_id"]
             KG["kg/loader.py\nnetworkx DiGraph\nprerequisite gating"]
             BKT["mastery/bkt.py\npure-function BKT update"]
             RAG["rag/retrieve.py\nBM25 over SOP chunks\ncite-or-abstain"]
-            PII["memory/pii_gate.py\nfail-closed allowlist"]
+            PII["agent/tools/extract_facts/pii_gate.py\nfail-closed allowlist"]
             Repo["persistence/repo.py"]
             TTSClient["agent/tts.py\nbest-effort call"]
         end
@@ -83,11 +83,11 @@ flowchart TB
 | Box | Input | Output | Responsibility |
 |---|---|---|---|
 | `api/chat.py` | HTTP POST/GET from `ChatPage.tsx` | SSE stream (tokens, `session_id`, audio) | One `/api/chat` call = one LangGraph turn; `session_id` **is** the `thread_id` — no separate session table |
-| `orchestrator.py` | Prior checkpoint state + new user turn | Partial state updates, one rendered reply | LangGraph ReAct loop; decides *which* tool fires, never the deterministic math inside it |
+| `agent/orchestrator/` | Prior checkpoint state + new user turn | Partial state updates, one rendered reply | LangGraph ReAct loop; decides *which* tool fires, never the deterministic math inside it |
 | `kg/loader.py` | `graph.yaml` | Next assessable KC | Prerequisite-gated KC selection over `networkx` |
 | `mastery/bkt.py` | Prior mastery, turn correctness | Updated mastery (pure function) | Bayesian Knowledge Tracing — never computed by the LLM |
 | `rag/retrieve.py` | Query text | Cited chunk or abstain | BM25 over the 8-doc SOP corpus; below-threshold → abstain, never fabricate |
-| `memory/pii_gate.py` | Candidate personal fact | Store / reject | Fail-closed allowlist; special-category disclosures acknowledged, never persisted |
+| `agent/tools/extract_facts/pii_gate.py` | Candidate personal fact | Store / reject | Fail-closed allowlist; special-category disclosures acknowledged, never persisted |
 | `persistence/repo.py` | Mastery deltas, facts, events | Rows in `runtime.db` | Sole writer of the runtime SQLite schema |
 | `studio/extract.py` | Raw SOP text | Draft KCs + `prerequisite_of` edges | LLM proposes a taxonomy; never auto-applied |
 | `studio/materialize.py` | Approved draft | `app/kg/graph.yaml` | Only path that writes the graph the runtime reads — gated on explicit human approval |
@@ -99,7 +99,7 @@ The KG studio (`app/studio/`) is a separate, offline pipeline, not part of this 
 
 ### Agent architecture (LangGraph ReAct orchestrator)
 
-The conversational agent is a single **ReAct loop**: one LLM node picks a tool, one dispatch node runs the corresponding deterministic Python (never the model's own arguments for anything requiring an audit trail), and the loop repeats until the model calls `compose_delivery`/`end_session` or a max-iteration cap is hit. State is checkpointed to SQLite per turn, keyed by `session_id`.
+The conversational agent is a single **ReAct loop**: one LLM node picks a tool, one dispatch node runs the corresponding deterministic Python (never the model's own arguments for anything requiring an audit trail), and the loop repeats until the model calls `deliver_reply`/`end_session` or a max-iteration cap is hit. State is checkpointed to SQLite per turn, keyed by `session_id`.
 
 ```mermaid
 flowchart TD
@@ -108,29 +108,32 @@ flowchart TD
 
     Agent -- "route_after_agent" --> RouteAgent{"tool call\nrequested?"}
     RouteAgent -- "yes" --> Tools["tools node\ndispatches to real Python logic"]
-    RouteAgent -- "no / compose_delivery / end_session" --> Finalize["finalize node"]
+    RouteAgent -- "no tool call" --> Finalize["finalize node"]
 
-    Tools -- "route_after_tools" --> RouteTools{"more tool calls,\nunder max_tool_iterations?"}
-    RouteTools -- "yes, loop back" --> Agent
-    RouteTools -- "no" --> Finalize
+    Tools -- "route_after_tools" --> RouteTools{"deliver_reply fired\nthis turn?"}
+    RouteTools -- "no, loop back" --> Agent
+    RouteTools -- "yes" --> Finalize
 
     Finalize --> End([END])
 
-    subgraph ToolDispatch["tools node — 5 tool schemas, all backed by deterministic modules"]
+    subgraph ToolDispatch["tools node — 6 tool schemas, all backed by deterministic modules"]
         direction LR
-        T1["assess_reply"] --> Eval["evaluate_turn()\napp/agent/nodes/evaluate.py"]
+        T1["evaluate_response"] --> Eval["evaluate_turn()\napp/agent/tools/evaluate_response/"]
         Eval --> BKTU["bkt.update()\napp/mastery/bkt.py"]
         BKTU --> NextKC["next_assessable_kc()\napp/kg/loader.py"]
 
-        T2["remediate"] --> RunRem["run_remediation()\napp/agent/subagents/remediation.py"]
+        T2["fetch_remediation"] --> RunRem["fetch_remediation_from_grade()\napp/agent/tools/fetch_remediation.py"]
         RunRem --> Retr["Index.retrieve()\napp/rag/retrieve.py\ncites or abstains"]
 
-        T3["extract_personal_fact"] --> ExtractFact["extract_and_gate_fact()\napp/agent/nodes/memory.py"]
-        ExtractFact --> Gate["pii_gate\napp/memory/pii_gate.py"]
+        T3["answer_sop_question"] --> RunSop["fetch_remediation_from_question()\napp/agent/tools/fetch_remediation.py"]
+        RunSop --> Retr
 
-        T4["compose_delivery"]
+        T4["extract_facts"] --> ExtractFact["extract_and_gate_fact()\napp/agent/tools/extract_facts/"]
+        ExtractFact --> Gate["pii_gate.gate()\napp/agent/tools/extract_facts/pii_gate.py"]
 
-        T5["end_session"]
+        T5["deliver_reply"]
+
+        T6["end_session"]
     end
 
     Tools -.-> ToolDispatch
@@ -142,24 +145,26 @@ flowchart TD
     Finalize -.->|"checkpoint written"| CP
 ```
 
-**Pattern**: single-agent ReAct (bind-tools + loop), not a multi-agent handoff graph — `remediate` and `compose_delivery` dispatch into subagent-style modules (`app/agent/subagents/`) but those run as plain function calls inside `tools_node`, not as separate graph nodes with their own state. The five tool schemas (`app/agent/tools.py`) define only names/descriptions/args for `.bind_tools()`; `tools_node` is what actually invokes the mastery engine, KG traversal, and PII gate, so grading, unlock rules, retrieval-or-abstain, and the PII allowlist stay unit-testable without an LLM and immune to prompt injection changing their output.
+**Pattern**: single-agent ReAct (bind-tools + loop), not a multi-agent handoff graph — `evaluate_response`, `fetch_remediation`, `answer_sop_question`, `extract_facts`, and `deliver_reply` dispatch into deterministic modules (`app/agent/tools/`) but those run as plain function calls inside `tools_node`, not as separate graph nodes with their own state. The six tool schemas (`app/agent/tools/__init__.py`) define only names/descriptions/args for `.bind_tools()`; `tools_node` (`app/agent/orchestrator/__init__.py`) is what actually invokes the mastery engine, KG traversal, RAG retrieval, and the PII gate, so grading, unlock rules, retrieval-or-abstain, and the PII allowlist stay unit-testable without an LLM and immune to prompt injection changing their output.
+
+`fetch_remediation` and `answer_sop_question` share the same underlying grounded lookup (`app/rag/retrieve.py`'s BM25 index, wrapped by `app/agent/tools/fetch_remediation.py`) and the same cite-or-abstain contract — they differ only in what triggers them and what query they build: `fetch_remediation` fires after `evaluate_response` grades an answer incorrect/partial (query built from the KC + misconception); `answer_sop_question` fires directly off an employee's own question, with no grading dependency, so Sofía can answer a procedural question mid-conversation without it being tied to an assessment.
 
 ## Implementation
 
 | Capability | Implementation | Code / tests |
 |---|---|---|
-| Multi-turn conversation, resumable | LangGraph state machine, SQLite checkpointer | [`backend/app/agent/orchestrator.py`](backend/app/agent/orchestrator.py), [`tests/test_agent_orchestrator.py`](backend/tests/test_agent_orchestrator.py) |
+| Multi-turn conversation, resumable | LangGraph state machine, SQLite checkpointer | [`backend/app/agent/orchestrator/`](backend/app/agent/orchestrator/), [`tests/test_agent_orchestrator.py`](backend/tests/test_agent_orchestrator.py) |
 | Structured extraction | `TurnEvaluation`, `PersonalFact`, `SessionSummary`, `LearningRisk` — Pydantic models, no free-text state | [`backend/app/schemas/extraction.py`](backend/app/schemas/extraction.py) |
-| LLM output validation | Every LLM call uses `.with_structured_output()`; validation failure triggers one repair re-prompt, then a logged fallback | [`backend/app/agent/nodes/evaluate.py`](backend/app/agent/nodes/evaluate.py), [`backend/app/agent/nodes/memory.py`](backend/app/agent/nodes/memory.py) |
-| Error/edge-case handling | Off-topic/opt-out classification instead of a dead end; prompt-injection inputs refused and logged, never obeyed | [`backend/tests/test_agent_nodes.py`](backend/tests/test_agent_nodes.py) |
+| LLM output validation | Every LLM call uses `.with_structured_output()`; validation failure triggers one repair re-prompt, then a logged fallback | [`backend/app/agent/tools/evaluate_response/`](backend/app/agent/tools/evaluate_response/), [`backend/app/agent/tools/extract_facts/`](backend/app/agent/tools/extract_facts/) |
+| Error/edge-case handling | Off-topic/opt-out classification instead of a dead end; prompt-injection inputs refused and logged, never obeyed | [`backend/tests/test_agent_tools.py`](backend/tests/test_agent_tools.py) |
 | Persistence | SQLite: learner-model, personal-fact, and episodic-archive tables; mastery changes and emitted events are replayable | [`backend/app/persistence/repo.py`](backend/app/persistence/repo.py), [`backend/tests/test_persistence_repo.py`](backend/tests/test_persistence_repo.py) |
 | Field-level validation | Pydantic constraints (`confidence: float = Field(ge=0, le=1)`), closed `Literal` enums for classification/language/sentiment/risk type | [`backend/app/schemas/extraction.py`](backend/app/schemas/extraction.py) |
 | Session summary | `SessionSummary` on session close: mastery deltas, flagged risks, fixed `not_for_use_in` constraint tag | [`backend/app/schemas/extraction.py`](backend/app/schemas/extraction.py) |
 | LLM provider | Pluggable (`app/agent/llm.py`); tested against OpenAI and Gemini in addition to the default | [`test_agent_llm.py`](backend/tests/test_agent_llm.py), [`test_agent_llm_openai.py`](backend/tests/test_agent_llm_openai.py), [`test_agent_llm_gemini.py`](backend/tests/test_agent_llm_gemini.py) |
 | TTS | Kokoro-82M as a standalone service; unreachable service degrades to text-only, never fails a turn | [`voice-service/`](voice-service/), [`backend/app/agent/tts.py`](backend/app/agent/tts.py), [`backend/tests/test_tts.py`](backend/tests/test_tts.py) |
-| RAG | 8-document SOP corpus, chunked and embedded; citation required for remediation, below-threshold retrieval abstains and logs the gap | [`backend/app/rag/retrieve.py`](backend/app/rag/retrieve.py), [`docs/sops/`](docs/sops/), [`backend/tests/test_rag_retrieve.py`](backend/tests/test_rag_retrieve.py) |
-| Sentiment | Per-turn tag `neutral \| confident \| frustrated \| distressed`; frustration softens tone/reduces difficulty, distress triggers escalation | [`backend/app/schemas/extraction.py`](backend/app/schemas/extraction.py), [`backend/app/agent/subagents/delivery.py`](backend/app/agent/subagents/delivery.py) |
-| Cross-session memory | Non-PII personal facts (name, language, shift pattern, contact preference) behind an allowlist + fail-closed PII gate; special-category disclosures acknowledged in-conversation, never persisted | [`backend/app/memory/pii_gate.py`](backend/app/memory/pii_gate.py), [`backend/tests/test_pii_gate.py`](backend/tests/test_pii_gate.py) |
+| RAG | 8-document SOP corpus, chunked and BM25-indexed; citation required for both graded-answer remediation and direct SOP questions, below-threshold retrieval abstains and logs the gap | [`backend/app/rag/retrieve.py`](backend/app/rag/retrieve.py), [`backend/app/agent/tools/fetch_remediation.py`](backend/app/agent/tools/fetch_remediation.py), [`docs/sops/`](docs/sops/), [`backend/tests/test_rag_retrieve.py`](backend/tests/test_rag_retrieve.py) |
+| Sentiment | Per-turn tag `neutral \| confident \| frustrated \| distressed`; frustration softens tone/reduces difficulty, distress triggers escalation | [`backend/app/schemas/extraction.py`](backend/app/schemas/extraction.py), [`backend/app/agent/tools/deliver_reply/`](backend/app/agent/tools/deliver_reply/) |
+| Cross-session memory | Non-PII personal facts (name, language, shift pattern, contact preference) behind an allowlist + fail-closed PII gate; special-category disclosures acknowledged in-conversation, never persisted | [`backend/app/agent/tools/extract_facts/pii_gate.py`](backend/app/agent/tools/extract_facts/pii_gate.py), [`backend/tests/test_pii_gate.py`](backend/tests/test_pii_gate.py) |
 | Multi-language | ES/EN/RO, detected per turn, mid-conversation code-switching | [`backend/app/schemas/extraction.py`](backend/app/schemas/extraction.py) (`Language`), [`test_chat_graph.py`](backend/tests/test_chat_graph.py) |
 
 Two components beyond structured extraction/conversation management:
@@ -173,16 +178,15 @@ A conversational agent needs a skills graph to teach against, and no organizatio
 
 The KG-authoring studio ([`backend/app/studio/`](backend/app/studio/), `frontend/src/studio/`) automates the first pass: an employer uploads SOP documents, an LLM proposes a KC taxonomy and `prerequisite_of` graph with each node traced to its source SOP excerpt, and nothing reaches the runtime agent until a human approves it — the same fail-closed, human-in-the-loop pattern as the PII gate, applied to graph authorship. This is what makes the graph the agent runs against a maintainable input rather than a fixture.
 
-185 backend tests: extraction accuracy, mastery math, unlock rules, PII gate (including special-category attempts), adversarial/injection inputs, grounding-abstain behavior. See `backend/tests/`.
+192 backend tests: extraction accuracy, mastery math, unlock rules, PII gate (including special-category attempts), adversarial/injection inputs, grounding-abstain behavior. See `backend/tests/`.
 
 ## Repository layout
 
 - `backend/` — FastAPI app (`app/`), tests (`tests/`), Python ≥3.11.
-  - `app/agent/` — LangGraph orchestrator (`orchestrator.py`), nodes (`nodes/`), subagents (`subagents/`) for delivery/remediation, LLM provider abstraction (`llm.py`), TTS integration (`tts.py`).
+  - `app/agent/` — LangGraph ReAct orchestrator (`orchestrator/`), tool schemas + dispatch-backing modules (`tools/`: `evaluate_response/`, `fetch_remediation.py`, `answer_sop_question` (shares `fetch_remediation.py`), `extract_facts/` — includes the fail-closed PII gate, `deliver_reply/`), LLM provider abstraction (`llm.py`), TTS integration (`tts.py`).
   - `app/mastery/` — pure-function BKT engine (`bkt.py`).
   - `app/kg/` — knowledge-graph loader/traversal (`networkx`), 24-KC seed graph (`graph.yaml`).
-  - `app/memory/` — fail-closed PII gate (`pii_gate.py`).
-  - `app/rag/` — SOP retrieval for grounded remediation (`retrieve.py`).
+  - `app/rag/` — SOP retrieval for grounded remediation and direct SOP questions (`retrieve.py`).
   - `app/studio/` — SOP-to-KG authoring pipeline (ingest, extract, reconcile, validate, materialize).
   - `app/persistence/` — SQLite schema and repo.
   - `app/schemas/` — Pydantic models for every boundary (LLM extraction, API request/response).
@@ -195,7 +199,7 @@ The KG-authoring studio ([`backend/app/studio/`](backend/app/studio/), `frontend
 ## Design decisions
 
 - **Deterministic logic never lives inside an LLM call.** Mastery updates, KG traversal, and the PII gate are unit-tested Python functions that take the LLM's structured output as input; they never receive model-supplied arguments for anything requiring an audit trail.
-- **Fail-closed for irreversible actions.** The PII gate rejects on ambiguity instead of store-then-flag; RAG remediation abstains instead of answering ungrounded; the studio pipeline never materializes a graph edit without explicit human approval.
+- **Fail-closed for irreversible actions.** The PII gate rejects on ambiguity instead of store-then-flag; RAG retrieval (both remediation and direct SOP questions) abstains instead of answering ungrounded; the studio pipeline never materializes a graph edit without explicit human approval.
 - **24 KCs, 1 predicate, `networkx`, not Neo4j.** Only prerequisite traversal is needed; everything else is a KC attribute, not a graph edge. Same traversal API, swappable backend (`docs/PRD.md` §5).
 - **SQLite, not Postgres; in-process events, not Kafka.** Single-process scope. Events are emitted as validated JSON matching the target schemas, so the swap is additive.
 - **Voice degrades, never blocks.** TTS is a best-effort side output per turn; an unreachable voice service falls back to text-only.
@@ -323,7 +327,7 @@ docker compose up --build
 ## Tooling
 
 - **Lint/format**: `ruff` (backend), `eslint` (frontend).
-- **Tests**: `pytest` (backend) — 185 tests across extraction, mastery, KG gating, PII, RAG, studio, persistence.
+- **Tests**: `pytest` (backend) — 192 tests across extraction, mastery, KG gating, PII, RAG, studio, persistence.
 - **Evals**: `pytest evals -m eval` (backend) — opt-in, real-LLM trajectory/grounding/conversation-quality scoring, not part of the CI gate. See [Evals](#evals).
 - **Pre-commit**: `pip install pre-commit && pre-commit install` runs ruff on commit.
 - **CI**: GitHub Actions runs ruff + pytest + frontend lint/build on push/PR.

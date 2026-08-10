@@ -11,6 +11,7 @@ import {
   type KCInfo,
   type ReasoningTrace as Trace,
   type StoredFact,
+  type TraceStep,
 } from "./api/chat";
 import MasteryPanel from "./MasteryPanel";
 import MemoryLog from "./MemoryLog";
@@ -19,6 +20,7 @@ import "./App.css";
 
 type DisplayMessage = ChatMessage & {
   trace?: Trace;
+  toolTrace?: TraceStep[];
   citations?: Citation[];
   system?: boolean;
   audioBlocked?: boolean;
@@ -45,6 +47,7 @@ export default function ChatPage() {
   // Buffered until the reply's first token arrives, then attached to that message
   // (PRD §6.1: reasoning container precedes the rendered reply).
   const pendingTrace = useRef<Trace | null>(null);
+  const pendingToolTrace = useRef<TraceStep[]>([]);
   const pendingCitations = useRef<Citation[]>([]);
   const sessionIdRef = useRef<string | null>(null);
   // Which message index the audio from the in-flight turn belongs to, and the
@@ -133,6 +136,7 @@ export default function ChatPage() {
                 role: "assistant",
                 content: chunk,
                 trace: pendingTrace.current ?? undefined,
+                toolTrace: pendingToolTrace.current,
                 citations: pendingCitations.current,
               },
             ];
@@ -149,6 +153,9 @@ export default function ChatPage() {
       },
       onReasoning: (trace) => {
         pendingTrace.current = trace;
+      },
+      onTraceStep: (step) => {
+        pendingToolTrace.current = [...pendingToolTrace.current, step];
       },
       onCitation: (citation) => {
         pendingCitations.current = [...pendingCitations.current, citation];
@@ -202,6 +209,7 @@ export default function ChatPage() {
     setIsStreaming(true);
 
     pendingTrace.current = null;
+    pendingToolTrace.current = [];
     pendingCitations.current = [];
     let awaitingNewReply = true;
 
@@ -226,6 +234,7 @@ export default function ChatPage() {
                   role: "assistant",
                   content: chunk,
                   trace: pendingTrace.current ?? undefined,
+                  toolTrace: pendingToolTrace.current,
                   citations: pendingCitations.current,
                 },
               ];
@@ -247,6 +256,9 @@ export default function ChatPage() {
         onReasoning: (trace) => {
           pendingTrace.current = trace;
         },
+        onTraceStep: (step) => {
+          pendingToolTrace.current = [...pendingToolTrace.current, step];
+        },
         onCitation: (citation) => {
           pendingCitations.current = [...pendingCitations.current, citation];
         },
@@ -266,6 +278,7 @@ export default function ChatPage() {
               role: "assistant",
               content: "Session paused at your request.",
               trace: pendingTrace.current ?? undefined,
+              toolTrace: pendingToolTrace.current,
               citations: pendingCitations.current,
               system: true,
             },
@@ -332,8 +345,12 @@ export default function ChatPage() {
         <div className="chat-messages">
           {messages.map((message, index) => (
             <div key={index} className={`chat-message-row chat-message-row--${message.role}`}>
-              {message.trace && (
-                <ReasoningTrace trace={message.trace} citations={message.citations ?? []} />
+              {(message.trace || (message.toolTrace && message.toolTrace.length > 0)) && (
+                <ReasoningTrace
+                  trace={message.trace}
+                  toolTrace={message.toolTrace ?? []}
+                  citations={message.citations ?? []}
+                />
               )}
               <div
                 className={`chat-message chat-message--${message.role}${

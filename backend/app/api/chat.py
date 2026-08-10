@@ -178,9 +178,15 @@ async def _graph_stream(request: ChatRequest, compiled_graph) -> AsyncIterator[d
         }
 
     finalized_text = ""
+    trace_emitted = 0
     try:
         async for step in compiled_graph.astream(payload, config, stream_mode="updates"):
             for node_name, update in step.items():
+                if update and update.get("tool_trace"):
+                    full_trace = update["tool_trace"]
+                    for entry in full_trace[trace_emitted:]:
+                        yield {"event": "trace_step", "data": json.dumps(entry)}
+                    trace_emitted = len(full_trace)
                 for event in _events_for_step(node_name, update):
                     if event["event"] == "token":
                         finalized_text += event["data"]

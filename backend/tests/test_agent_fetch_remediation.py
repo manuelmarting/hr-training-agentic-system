@@ -4,7 +4,11 @@ import pytest
 from pydantic import ValidationError
 
 from app.agent.tools.deliver_reply import ABSTAIN_TEXT, DeliveryMessage, deliver_reply
-from app.agent.tools.fetch_remediation import RemediationReply, fetch_remediation
+from app.agent.tools.fetch_remediation import (
+    RemediationReply,
+    fetch_remediation,
+    fetch_remediation_from_question,
+)
 from app.rag.retrieve import Citation, build_index, build_index_from_sops
 from app.studio.ingest import IngestedDoc
 
@@ -39,6 +43,26 @@ def test_fetch_remediation_abstains_below_threshold(index):
     assert reply.citation is None
     assert reply.excerpt is None
     assert reply.knowledge_gap_reason
+
+
+async def test_fetch_remediation_from_question_returns_cited_reply_on_grounded_match(real_index):
+    reply = await fetch_remediation_from_question(
+        real_index,
+        employee_text="what PPE is required in the dangerous goods segregation area",
+        query_hint="",
+    )
+    assert reply.abstained is False
+    assert reply.citation is not None
+    assert reply.excerpt is not None
+
+
+async def test_fetch_remediation_from_question_abstains_on_unrelated_question(real_index):
+    reply = await fetch_remediation_from_question(
+        real_index, employee_text="what is the payroll direct deposit cutoff", query_hint=""
+    )
+    assert reply.abstained is True
+    assert reply.citation is None
+    assert reply.excerpt is None
 
 
 def test_remediation_reply_rejects_missing_citation_when_not_abstained():

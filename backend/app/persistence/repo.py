@@ -72,15 +72,24 @@ class Repo:
     # T3 — personal facts ------------------------------------------------------
 
     def add_fact(self, employee_id: str, fact: PersonalFact) -> StoredFact:
+        """Store a fact, replacing any prior fact of the same type for this employee
+        (one row per employee_id/fact_type, enforced by a unique index)."""
         now = _now()
         with self._lock:
-            cur = self._conn.execute(
+            self._conn.execute(
                 "INSERT INTO personal_facts "
-                "(employee_id, fact_type, value, confidence, created_at) VALUES (?, ?, ?, ?, ?)",
+                "(employee_id, fact_type, value, confidence, created_at) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(employee_id, fact_type) DO UPDATE SET "
+                "value = excluded.value, confidence = excluded.confidence, "
+                "created_at = excluded.created_at",
                 (employee_id, fact.fact_type, fact.value, fact.confidence, now),
             )
+            row = self._conn.execute(
+                "SELECT id FROM personal_facts WHERE employee_id = ? AND fact_type = ?",
+                (employee_id, fact.fact_type),
+            ).fetchone()
             self._conn.commit()
-        return StoredFact(id=cur.lastrowid, employee_id=employee_id, fact=fact, created_at=now)
+        return StoredFact(id=row["id"], employee_id=employee_id, fact=fact, created_at=now)
 
     def list_facts(self, employee_id: str) -> list[StoredFact]:
         rows = self._conn.execute(

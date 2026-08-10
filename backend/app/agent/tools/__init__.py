@@ -34,6 +34,15 @@ def fetch_remediation(reason: str = "") -> str:
 
 
 @tool
+def answer_sop_question(query: str = "") -> str:
+    """Look up a grounded SOP excerpt to answer a question the employee asked
+    directly (not a knowledge gap from a graded wrong answer — use
+    `fetch_remediation` for that). `query` is an optional short paraphrase of
+    what they're asking, to help aim the search."""
+    raise NotImplementedError("dispatched by orchestrator.py; never invoked directly")
+
+
+@tool
 def extract_facts() -> str:
     """Check the employee's reply for an allowlisted personal fact worth
     remembering (preferred name, language, shift pattern, contact-time preference).
@@ -60,6 +69,7 @@ def end_session() -> str:
 ORCHESTRATOR_TOOLS = [
     evaluate_response,
     fetch_remediation,
+    answer_sop_question,
     extract_facts,
     deliver_reply,
     end_session,

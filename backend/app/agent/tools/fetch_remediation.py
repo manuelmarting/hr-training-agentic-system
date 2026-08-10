@@ -1,4 +1,4 @@
-"""Grounded remediation: cite or abstain (PRD §7; plan §4 Phase 3).
+"""Grounded remediation and SOP question-answering: cite or abstain (PRD §7; plan §4 Phase 3).
 
 The excerpt and its citation travel together as data — `citation`/`excerpt` are
 structurally required together unless the reply abstains, a type-level invariant
@@ -16,6 +16,11 @@ orchestrator already knows (the KC, the question, and its own short note on the
 misconception) — the orchestrator decides *whether* to call it (only for
 'incorrect'/'partial' grades, never 'correct'/'off_topic'), grounding itself stays
 exactly as strict either way.
+
+`fetch_remediation_from_question` is the analogous entry point for the
+`answer_sop_question` tool: same pure primitive, but the query comes from the
+employee's own message (a direct SOP question) rather than a graded misconception,
+and it carries no dependency on a prior grade.
 """
 
 from pydantic import BaseModel, model_validator
@@ -61,4 +66,14 @@ async def fetch_remediation_from_grade(
     """Build a retrieval query from what the orchestrator already knows and look it
     up. Never raises — a retrieval miss is the abstain path, not an error."""
     query = f"{kc_id} {question} {reason}".strip()
+    return fetch_remediation(index, query=query)
+
+
+async def fetch_remediation_from_question(
+    index: Index, *, employee_text: str, query_hint: str
+) -> RemediationReply:
+    """Build a retrieval query from the employee's own question (a direct SOP
+    question, not a graded misconception) and look it up. Never raises — a
+    retrieval miss is the abstain path, not an error."""
+    query = f"{employee_text} {query_hint}".strip()
     return fetch_remediation(index, query=query)

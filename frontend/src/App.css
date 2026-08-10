@@ -356,6 +356,24 @@
   border-top: 1px solid var(--surface-border);
 }
 
+.reasoning-trace__steps {
+  margin: 0.5rem 0 0;
+  padding: 0.4rem 0 0 1.1rem;
+  border-top: 1px solid var(--surface-border);
+}
+
+.reasoning-trace__step {
+  margin: 0.15rem 0;
+}
+
+.reasoning-trace__step--thought {
+  font-style: italic;
+}
+
+.reasoning-trace__step--tool-call code {
+  color: var(--text);
+}
+
 /* --- Mastery panel & memory log (side rails) ---------------------------- */
 
 .mastery-panel,

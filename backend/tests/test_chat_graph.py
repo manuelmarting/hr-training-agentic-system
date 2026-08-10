@@ -195,6 +195,7 @@ def test_new_session_streams_expected_events(graph_client: TestClient):
 
     assert names[0] == "session"
     assert "reasoning" in names
+    assert "trace_step" in names
     assert "mastery_update" in names
     assert "token" in names
     assert names[-1] == "done"
@@ -204,6 +205,12 @@ def test_new_session_streams_expected_events(graph_client: TestClient):
 
     reasoning_payload = json.loads(next(data for name, data in events if name == "reasoning"))
     assert reasoning_payload["tool_call"] == "evaluate_response"
+
+    trace_payloads = [json.loads(data) for name, data in events if name == "trace_step"]
+    tools_called = [step["tool"] for step in trace_payloads if step["type"] == "tool_call"]
+    # ScriptedLLM's policy for this turn: grade, then compose the reply -- in order,
+    # and every tool call shows up here, not just evaluate_response.
+    assert tools_called == ["evaluate_response", "deliver_reply"]
 
 
 def test_session_open_streams_welcome_without_grading(graph_client: TestClient):
@@ -215,6 +222,16 @@ def test_session_open_streams_welcome_without_grading(graph_client: TestClient):
     assert "reasoning" not in names
     assert "mastery_update" not in names
     assert names[-1] == "done"
+
+    # ScriptedLLM still attempts evaluate_response first (it only reacts to what
+    # the prior tool call *was*, not whether it succeeded) -- tools_node's
+    # is_session_open guard rejects it with an error result, which still shows up
+    # in the trace, then the model moves on to deliver_reply.
+    trace_payloads = [json.loads(data) for name, data in events if name == "trace_step"]
+    tools_called = [step["tool"] for step in trace_payloads if step["type"] == "tool_call"]
+    assert tools_called == ["evaluate_response", "deliver_reply"]
+    rejected = next(step for step in trace_payloads if step.get("tool") == "evaluate_response")
+    assert rejected["result"].startswith("error:")
 
 
 def test_session_open_ignored_on_resumed_session(graph_client: TestClient):

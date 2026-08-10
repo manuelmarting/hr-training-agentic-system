@@ -27,6 +27,15 @@ CREATE TABLE IF NOT EXISTS personal_facts (
     created_at  TEXT NOT NULL
 );
 
+-- Facts are one-per-(employee, type): a later value for the same type replaces
+-- the earlier one (see Repo.add_fact) rather than accumulating stale rows.
+-- Dedup first so the unique index below can be created on a DB with pre-existing
+-- duplicate rows from before this constraint existed.
+DELETE FROM personal_facts
+WHERE id NOT IN (
+    SELECT MAX(id) FROM personal_facts GROUP BY employee_id, fact_type
+);
+
 CREATE TABLE IF NOT EXISTS episodic_archive (
     session_id  TEXT PRIMARY KEY,
     employee_id TEXT NOT NULL,
@@ -44,7 +53,8 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON events (session_id, id);
-CREATE INDEX IF NOT EXISTS idx_personal_facts_employee ON personal_facts (employee_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_personal_facts_unique
+    ON personal_facts (employee_id, fact_type);
 """
 
 

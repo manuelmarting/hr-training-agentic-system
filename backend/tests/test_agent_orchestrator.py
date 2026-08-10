@@ -292,6 +292,56 @@ async def test_incorrect_answer_triggers_remediation_with_citation(kg_graph, rag
         assert result["citations"][0]["doc_id"]
 
 
+class _SopQuestionLLM:
+    """Calls `answer_sop_question` then `deliver_reply` directly — no prior
+    `evaluate_response` — to prove the tool isn't gated behind a grade."""
+
+    def __init__(self, query: str) -> None:
+        self._query = query
+
+    async def extract(self, output_model, system, user):
+        if output_model is DeliveryMessage:
+            return DeliveryMessage(text="(stub) here's what the SOP says")
+        raise AssertionError(f"unexpected output_model {output_model}")
+
+    async def acall_with_tools(self, messages, tools):
+        tool_results = [m.content for m in messages if isinstance(m, ToolMessage)]
+        call_id = f"call-{len(tool_results)}"
+
+        def _call(name: str, args: dict | None = None) -> AIMessage:
+            call = {"name": name, "args": args or {}, "id": call_id}
+            return AIMessage(content="", tool_calls=[call])
+
+        if not tool_results:
+            return _call("answer_sop_question", {"query": self._query})
+        if len(tool_results) == 1:
+            return _call("deliver_reply")
+        return AIMessage(content="done")
+
+
+async def test_answer_sop_question_grounds_a_direct_question_without_prior_grading(
+    kg_graph, rag_index
+):
+    repo = Repo(":memory:")
+    llm = _SopQuestionLLM("what PPE is required in the dangerous goods segregation area")
+    graph = build_orchestrator(llm=llm, index=rag_index, repo=repo, kg_graph=kg_graph)
+    config = {"configurable": {"thread_id": "sess-sop-question"}}
+
+    initial = _initial_state("sess-sop-question")
+    result = await _run_turn(
+        graph,
+        config,
+        "what PPE do I need for DG segregation?",
+        initial=initial,
+    )
+
+    event_types = [e.event_type for e in repo.list_events("sess-sop-question")]
+    assert "turn_evaluated" not in event_types
+    assert "sop_question_answered" in event_types or "sop_question_abstained" in event_types
+    if result["citations"]:
+        assert result["citations"][0]["doc_id"]
+
+
 async def test_opt_out_emits_session_stop_and_skips_mastery(kg_graph, rag_index):
     repo = Repo(":memory:")
     llm = ScriptedOrchestratorLLM(["off_topic"])

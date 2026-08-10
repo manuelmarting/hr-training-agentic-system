@@ -52,7 +52,10 @@ from app.agent.tools import ORCHESTRATOR_TOOLS
 from app.agent.tools.deliver_reply import ABSTAIN_TEXT, deliver_reply
 from app.agent.tools.evaluate_response import evaluate_turn
 from app.agent.tools.extract_facts import extract_and_gate_fact
-from app.agent.tools.fetch_remediation import fetch_remediation_from_grade
+from app.agent.tools.fetch_remediation import (
+    fetch_remediation_from_grade,
+    fetch_remediation_from_question,
+)
 from app.kg.loader import DEFAULT_MASTERY_THRESHOLD, KnowledgeComponent, next_assessable_kc
 from app.mastery import bkt
 from app.persistence.repo import Repo
@@ -115,6 +118,24 @@ def _format_transcript(messages: list[dict]) -> str | None:
     return "\n".join(
         f"{'Sofía' if m['role'] == 'assistant' else 'Employee'}: {m['content']}" for m in messages
     )
+
+
+def _extract_thought_text(content: object) -> str | None:
+    """Free text alongside a tool-calling `AIMessage`, if any. Anthropic responses
+    that mix reasoning with tool calls represent `content` as a list of blocks
+    (`{"type": "text", "text": ...}` interleaved with `{"type": "tool_use", ...}`)
+    rather than a plain string — this is the only place that shape is unpacked, for
+    the `tool_trace` "thought" entries streamed to the frontend."""
+    if isinstance(content, str):
+        return content.strip() or None
+    if isinstance(content, list):
+        text = "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+        return text.strip() or None
+    return None
 
 
 @dataclass
@@ -272,6 +293,7 @@ def build_orchestrator(
             "pending_delivery_text": None,
             "pending_options": [],
             "pending_requires_confirmation": False,
+            "tool_trace": [],
         }
         if not state.get("is_session_open") and state.get("employee_text"):
             updates["messages"] = [{"role": "user", "content": state["employee_text"]}]
@@ -283,7 +305,14 @@ def build_orchestrator(
             [SystemMessage(content=ORCHESTRATOR_SYSTEM_PROMPT), *scratchpad],
             ORCHESTRATOR_TOOLS,
         )
-        return {"scratchpad": [*scratchpad, response]}
+        updates: dict = {"scratchpad": [*scratchpad, response]}
+        thought = _extract_thought_text(getattr(response, "content", None))
+        if thought:
+            updates["tool_trace"] = [
+                *state.get("tool_trace", []),
+                {"type": "thought", "content": thought},
+            ]
+        return updates
 
     def route_after_agent(state: SessionState) -> Literal["tools", "finalize"]:
         last = state["scratchpad"][-1]
@@ -385,6 +414,23 @@ def build_orchestrator(
             return f"grounded citation={reply.citation.doc_id} heading={reply.citation.heading}"
         return "abstained"
 
+    async def _handle_answer_sop_question(
+        state: SessionState, args: dict, ctx: _ToolCallContext
+    ) -> str:
+        reply = await fetch_remediation_from_question(
+            index,
+            employee_text=state["employee_text"],
+            query_hint=str(args.get("query", "")),
+        )
+        ctx.last_remediation = reply.model_dump()
+        ctx.updates["last_remediation"] = ctx.last_remediation
+        event_type = "sop_question_abstained" if reply.abstained else "sop_question_answered"
+        repo.append_event(state["session_id"], state["turn_index"], event_type, reply.model_dump())
+        if reply.citation is not None:
+            ctx.updates["citations"] = [reply.citation.model_dump()]
+            return f"grounded citation={reply.citation.doc_id} heading={reply.citation.heading}"
+        return "abstained"
+
     async def _handle_extract_facts(state: SessionState, args: dict, ctx: _ToolCallContext) -> str:
         fact, gate_result = await extract_and_gate_fact(llm, employee_text=state["employee_text"])
         if fact is None:
@@ -458,6 +504,7 @@ def build_orchestrator(
     tool_handlers = {
         "evaluate_response": _handle_evaluate_response,
         "fetch_remediation": _handle_fetch_remediation,
+        "answer_sop_question": _handle_answer_sop_question,
         "extract_facts": _handle_extract_facts,
         "deliver_reply": _handle_deliver_reply,
         "end_session": _handle_end_session,
@@ -466,13 +513,18 @@ def build_orchestrator(
     async def tools_node(state: SessionState) -> dict:
         last: AIMessage = state["scratchpad"][-1]
         tool_messages: list[ToolMessage] = []
+        trace_entries: list[dict] = []
         ctx = _ToolCallContext(state)
 
         for call in last.tool_calls:
             name = call["name"]
             args = call.get("args") or {}
 
-            if state.get("is_session_open") and name in ("evaluate_response", "fetch_remediation"):
+            if state.get("is_session_open") and name in (
+                "evaluate_response",
+                "fetch_remediation",
+                "answer_sop_question",
+            ):
                 result = (
                     "error: this is the session-open turn, there's no employee "
                     "reply yet — call deliver_reply"
@@ -490,8 +542,12 @@ def build_orchestrator(
                 result,
             )
             tool_messages.append(ToolMessage(content=result, tool_call_id=call["id"]))
+            trace_entries.append(
+                {"type": "tool_call", "tool": name, "args": args, "result": result}
+            )
 
         ctx.updates["scratchpad"] = [*state["scratchpad"], *tool_messages]
+        ctx.updates["tool_trace"] = [*state.get("tool_trace", []), *trace_entries]
         return ctx.updates
 
     async def finalize_node(state: SessionState) -> dict:

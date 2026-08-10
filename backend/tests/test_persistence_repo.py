@@ -40,6 +40,27 @@ def test_delete_unknown_fact_raises(repo):
         repo.delete_fact(999)
 
 
+def test_add_fact_replaces_same_type(repo):
+    repo.add_fact(
+        "emp-1", PersonalFact(fact_type="preferred_language", value="English", confidence=1.0)
+    )
+    repo.add_fact(
+        "emp-1", PersonalFact(fact_type="preferred_language", value="Spanish", confidence=1.0)
+    )
+
+    facts = repo.list_facts("emp-1")
+    assert len(facts) == 1
+    assert facts[0].fact.value == "Spanish"
+
+
+def test_add_fact_keeps_distinct_types(repo):
+    repo.add_fact("emp-1", PersonalFact(fact_type="preferred_language", value="es", confidence=0.9))
+    repo.add_fact("emp-1", PersonalFact(fact_type="preferred_name", value="Manu", confidence=0.9))
+
+    facts = repo.list_facts("emp-1")
+    assert {f.fact.fact_type for f in facts} == {"preferred_language", "preferred_name"}
+
+
 def test_archive_session_write_once(repo):
     summary = SessionSummary(session_id="sess-1", mastery_deltas={"SAF.001": 0.3})
     repo.archive_session("emp-1", summary)
