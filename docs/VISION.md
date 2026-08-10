@@ -1,17 +1,17 @@
 # PRD — Sofía: Continuous Training & Assessment Agent
 
-**Product area:** Orbio AI agent suite (4th agent)
+**Product area:** Extension to an existing frontline HR agent suite
 **Author:** Manuel Martín Gómez
 **Status:** Draft for discussion
 **Version:** 0.1 — August 2026
 
-> **How to read this document.** Sections 1–13 describe the product as it should exist. Section 14 marks the thin vertical slice implemented for the Core Engineer assignment (4–6h build) and states explicitly what is real, what is mocked, and why. Everything in 1–13 is designed so the slice in 14 is a genuine subset, not a different system.
+> **How to read this document.** Sections 1–13 describe the product as it should exist. Section 14 marks the thin vertical slice implemented as a 4–6h build and states explicitly what is real, what is mocked, and why. Everything in 1–13 is designed so the slice in 14 is a genuine subset, not a different system.
 
 ---
 
 ## 1. TL;DR
 
-Orbio's agents cover **getting people in** (Maria — hiring), **getting people started** (Daniel — onboarding) and **understanding the workforce** (Clare — employee insights). Nothing covers the 90% of the employment lifecycle *after* week two: keeping frontline workers competent, safe and legally certified as SOPs, equipment and regulations change.
+The existing agent suite covers **getting people in** (Maria — hiring), **getting people started** (Daniel — onboarding) and **understanding the workforce** (Clare — employee insights). Nothing covers the 90% of the employment lifecycle *after* week two: keeping frontline workers competent, safe and legally certified as SOPs, equipment and regulations change.
 
 **Sofía** is a multi-channel, multi-language agent that runs short conversational assessments and micro-training sessions with frontline employees over WhatsApp, Telegram, voice and in-app; maintains a per-employee mastery model over a role-specific **skills knowledge graph**; and emits structured competency, risk and action data that managers act on and Clare aggregates.
 
@@ -32,9 +32,9 @@ The wedge is not "e-learning with a chatbot". It is that **completion is not com
 
 Sofía closes the loop: Maria's hypothesis about a candidate becomes Sofía's prior; Sofía's observations become Clare's evidence.
 
-### 2.2 Why this is defensible for Orbio specifically
+### 2.2 Why this is defensible for the existing suite specifically
 
-1. **Distribution already exists.** The hard part of frontline L&D is reaching people without corporate email or desk time. Orbio has already solved channel access and identity through Maria/Daniel.
+1. **Distribution already exists.** The hard part of frontline L&D is reaching people without corporate email or desk time. The suite has already solved channel access and identity through Maria/Daniel.
 2. **Cold-start is solved.** Every competitor starts with an empty learner profile. Sofía starts with hiring and onboarding signal on day one.
 3. **It converts a cost centre into a data asset.** Mandatory training is a compliance tax customers already pay. Sofía does it cheaper *and* produces the competency graph nobody else has.
 4. **It extends ACV without changing the buyer.** Same buyer (HR/Ops director), same procurement, same works-council conversation. This is critical: the product must not smell like a productivity-surveillance tool or the deal dies in the works council.
@@ -120,7 +120,7 @@ Frontline employers in logistics, retail and manufacturing are legally obliged t
 
 ## 6. Worked domain example: warehouse operations knowledge graph
 
-The knowledge graph (KG) is the product's spine. It is **per role family per customer**, seeded from an Orbio-maintained template library and specialised with the customer's own SOPs.
+The knowledge graph (KG) is the product's spine. It is **per role family per customer**, seeded from a centrally maintained template library and specialised with the customer's own SOPs.
 
 ### 6.1 Structure
 
@@ -624,9 +624,9 @@ Hard external date: **2 December 2027** for Annex III high-risk conformity, assu
 
 ---
 
-## 14. MVP slice for the Core Engineer assignment (4–6h)
+## 14. MVP slice (4–6h build)
 
-**Framing for the reviewer:** the assignment asks for a conversational agent that collects and structures information. I'm building the *narrowest slice that exercises the hard parts of the real system* — KG-driven selection, deterministic mastery updates, grounded remediation, the PII gate and channel adaptation — rather than a broad but shallow demo. Everything else is explicitly mocked and the seams are visible.
+**Framing:** the brief calls for a conversational agent that collects and structures information. This builds the *narrowest slice that exercises the hard parts of the real system* — KG-driven selection, deterministic mastery updates, grounded remediation, the PII gate and channel adaptation — rather than a broad but shallow demo. Everything else is explicitly mocked and the seams are visible.
 
 ### 14.1 In scope (real, tested code)
 
@@ -709,12 +709,12 @@ sofia/
 **Blocking (need an answer before P1)**
 1. *(Legal / stakeholder)* Do we assume Annex III high-risk and build the conformity package now, or contract our way out of evaluative use and accept the drift risk? My recommendation is the former; it changes P2 scope materially.
 2. *(Legal)* Legal basis per country for mandatory-training contact on a personal device — and what the fallback is when an employee declines to use their own phone.
-3. *(Product / stakeholder)* Does the customer or Orbio own the knowledge graph? Template library maintained by us implies a content operation; customer-authored implies a much weaker cold start. This is a business-model decision, not a technical one.
+3. *(Product / stakeholder)* Does the customer or the platform owner own the knowledge graph? Template library maintained by us implies a content operation; customer-authored implies a much weaker cold start. This is a business-model decision, not a technical one.
 4. *(Engineering)* Does the Employee Context Service exist, or does Sofía define the first version of the cross-agent contract? If the latter, it should be scoped explicitly as shared infrastructure rather than smuggled into this feature.
 
 **Non-blocking**
 5. *(Data)* Do target customers have an error/incident taxonomy we can map to KCs? H2's proxy metric depends on it. If not, building that mapping with the first customer is itself a wedge.
 6. *(Engineering)* Voice: build on the existing telephony stack used elsewhere in the suite, or a separate real-time provider? ASR accuracy in 80 dB warehouse noise needs a spike before committing.
-7. *(Design)* Does the supervisor surface live in Orbio's UI, in Clare, or as a WhatsApp digest? Warehouse supervisors don't log into dashboards.
+7. *(Design)* Does the supervisor surface live in the suite's UI, in Clare, or as a WhatsApp digest? Warehouse supervisors don't log into dashboards.
 8. *(Data)* Is the item bank multi-language authored or translated-and-reviewed? Authoring cost per language vs. translation drift on regulatory content.
 9. *(Product)* Should employees see their own mastery? Motivating for some, anxiety-inducing and gaming-inducing for others. Worth testing rather than assuming.

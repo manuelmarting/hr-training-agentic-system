@@ -9,28 +9,28 @@ of it, except as explicitly stated below.
 
 Limited Evaluation Purpose
 
-This repository was created as a technical assessment submitted in
-connection with a job interview process. Access to this repository is
-granted solely so that the receiving organization and its personnel
-involved in that hiring process may:
+This repository was created and shared for a specific, limited
+evaluation purpose, at the sole discretion of the copyright holder.
+Access to this repository is granted solely so that the party it was
+shared with may:
 
   1. View and run the code to evaluate the author's technical skills
      and the submitted work; and
-  2. Discuss the submission internally for the purpose of making a
-     hiring decision.
+  2. Discuss the submission internally for the purpose of the
+     evaluation it was shared for.
 
 No other use is permitted, including but not limited to:
 
   - Using the code, in whole or in part, in any product, service, or
     internal tool, whether or not for commercial purposes;
   - Copying, forking, or redistributing the repository or any of its
-    contents outside the parties involved in the hiring process;
+    contents outside the parties it was shared with for that purpose;
   - Creating derivative works based on this repository;
   - Using this repository's contents (code, prompts, or documentation)
     as training, fine-tuning, or evaluation data for any machine
     learning or artificial intelligence model or system;
   - Retaining copies of this repository beyond what is reasonably
-    necessary for the hiring process described above.
+    necessary for the evaluation described above.
 
 Any use beyond the limited evaluation purpose above requires prior
 written permission from the copyright holder.

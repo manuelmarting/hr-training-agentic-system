@@ -1,11 +1,11 @@
 # PRD — Sofía: Continuous Training & Assessment Agent (MVP slice)
 
-**Product area:** Orbio AI agent suite (4th agent)
+**Product area:** Extension to an existing frontline HR agent suite
 **Author:** Manuel Martín Gómez
-**Status:** Draft — scoped for the Core Engineer assignment (4–6h build)
+**Status:** Draft — scoped as a 4–6h build slice
 **Version:** 0.1 — August 2026
 
-> Condensed from `docs/VISION.md`, which is the full product vision (§1–13) plus the assignment slice (§14). This document extracts only what's needed to scope and build the slice. See VISION.md for the complete rationale, architecture, regulatory analysis and roadmap.
+> Condensed from `docs/VISION.md`, which is the full product vision (§1–13) plus the build slice (§14). This document extracts only what's needed to scope and build the slice. See VISION.md for the complete rationale, architecture, regulatory analysis and roadmap.
 
 ---
 
@@ -13,7 +13,7 @@
 
 Sofía is a multi-language agent that runs short conversational assessments and micro-training sessions with frontline employees, maintains a per-employee mastery model over a role-specific skills knowledge graph, and emits structured competency, risk and action data. The wedge: **completion is not competence**, and today nobody can answer "which of my people can actually do the thing, right now?"
 
-This PRD scopes the **narrow vertical slice** built for the assignment: the hard parts of the real system (KG-driven selection, deterministic mastery updates, grounded remediation, the PII gate) implemented and tested, with everything else explicitly mocked.
+This PRD scopes the **narrow vertical slice** built: the hard parts of the real system (KG-driven selection, deterministic mastery updates, grounded remediation, the PII gate) implemented and tested, with everything else explicitly mocked.
 
 ---
 
